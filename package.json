@@ -1,0 +1,49 @@
+{
+  "name": "x-article-post",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Write Markdown, get a well-formatted X Article draft.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bridge": "node bridge/xap.mjs serve",
+    "package": "node scripts/build.mjs && node scripts/package.mjs",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.3.7",
+    "@types/node": "24.19.2",
+    "happy-dom": "21.0.4",
+    "typescript": "5.9.3",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  },
+  "dependencies": {
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-markdown": "6.5.2",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.15",
+    "@lezer/highlight": "1.2.5",
+    "codemirror": "6.0.2",
+    "katex": "0.19.1",
+    "mermaid": "12.2.0",
+    "node-emoji": "2.2.0",
+    "rehype-stringify": "10.0.1",
+    "remark-frontmatter": "5.0.0",
+    "remark-gfm": "4.0.1",
+    "remark-math": "6.0.0",
+    "remark-parse": "11.0.0",
+    "remark-rehype": "11.1.2",
+    "unified": "11.0.5",
+    "yaml": "2.9.1"
+  }
+}
