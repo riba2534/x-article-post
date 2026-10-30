@@ -1,5 +1,6 @@
 // Background side of the writer: picks/opens the X tab and drives the content script over a port.
 // It only ever creates or edits drafts; nothing here can publish.
+import { dropImages, loadImage } from '../shared/image-store';
 import type { ExtensionStatus, RuntimeMessage, WriteProgress, WriteRequest, WriteResult } from '../shared/types';
 import { WRITE_PORT, articleIdFromUrl, editUrl, type EditorStatus, type MainResult, type PortDown, type PortUp } from '../content/protocol';
 import { emptyMainResult, errorMessage } from '../content/util';
@@ -65,8 +66,10 @@ function drive(tabId: number, request: WriteRequest, articleId: string, run: Run
       touch();
       if (msg.type === 'progress') onProgress(msg.progress);
       else if (msg.type === 'need-image') {
-        const image = request.images[msg.imageId];
-        post(image ? { type: 'image', imageId: msg.imageId, image } : { type: 'image', imageId: msg.imageId, error: '图片未准备好' });
+        const stashed = request.images[msg.imageId];
+        void (stashed ? loadImage(request.runId, stashed) : Promise.resolve(undefined))
+          .catch(() => undefined)
+          .then((image) => post(image ? { type: 'image', imageId: msg.imageId, image } : { type: 'image', imageId: msg.imageId, error: '图片未准备好' }));
       } else if (msg.type === 'result') {
         finish(() => {
           port.disconnect();
@@ -112,6 +115,7 @@ export async function runWrite(request: WriteRequest, onProgress: (p: WriteProgr
     result = emptyResult(request.runId, run.cancelled ? 'cancelled' : errorMessage(e));
   } finally {
     active = null;
+    void dropImages(request.runId).catch(() => undefined);
   }
   progress({ runId: request.runId, phase: result.ok ? 'done' : 'error', message: result.ok ? '草稿已写入' : result.error ?? '写入失败' });
   broadcast({ type: 'xap:result', result });
