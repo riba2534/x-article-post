@@ -146,32 +146,3 @@ export async function setCover(file: File, checkCancel: () => void, timeoutMs = 
   }
   return { ok: false, warning: '封面上传超时' };
 }
-
-// X autosaves body edits with its own ArticleEntityUpdateContent request, debounced ~3 s after
-// the last change. Upload completions also send immediate saves carrying an older state, so only
-// a save that starts after the debounce window proves the latest edit was sent. We only observe
-// resource timings (read-only).
-const SAVE_DEBOUNCE_MS = 2500;
-
-/** Observes X's content saves while a write runs. */
-export function watchSaves(): { savedAfter(since: number, timeoutMs: number): Promise<boolean>; stop(): void } {
-  let latest = -Infinity;
-  const observer = new PerformanceObserver((list) => {
-    for (const e of list.getEntries()) {
-      if (/\/graphql\/[^/]+\/ArticleEntityUpdateContent\b/.test(e.name)) latest = Math.max(latest, e.startTime);
-    }
-  });
-  observer.observe({ type: 'resource' });
-  return {
-    /** True once X's debounced save for an edit made at `since` (performance.now()) completed. */
-    async savedAfter(since, timeoutMs) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (latest >= since + SAVE_DEBOUNCE_MS) return true;
-        await sleep(250);
-      }
-      return false;
-    },
-    stop: () => observer.disconnect(),
-  };
-}

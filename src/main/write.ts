@@ -1,5 +1,5 @@
 // The write flow in the MAIN world: text blocks, title, images, cover, cleanup. Never publishes.
-import type { PreparedImage, WritePhase } from '../shared/types';
+import { ARTICLE_BLOCK_LIMIT, type PreparedImage, type WritePhase } from '../shared/types';
 import { articleIdFromUrl, type MainResult, type MainWriteRequest } from '../content/protocol';
 import { emptyMainResult, errorMessage, sleep } from '../content/util';
 import {
@@ -17,7 +17,8 @@ import {
   type Draft,
   type ImageMarker,
 } from './draft';
-import { findDraftNode, findEditor, findOnFilesAdded, setCover, setTitle, watchSaves } from './dom';
+import { findDraftNode, findEditor, findOnFilesAdded, setCover, setTitle } from './dom';
+import { watchSaves, type SaveOutcome, type SaveWatcher } from './saves';
 
 export class Cancelled extends Error {
   constructor() {
@@ -34,7 +35,7 @@ export interface WriteIO {
 const UPLOAD_TIMEOUT_MS = 120_000;
 const UPLOAD_ATTEMPTS = 3;
 const HEARTBEAT_MS = 10_000;
-const SAVE_TIMEOUT_MS = 15_000;
+const SAVE_TIMEOUT_MS = 20_000;
 const STICK_MS = 1500;
 const CANCEL_GRACE_MS = 15_000;
 
@@ -237,9 +238,9 @@ function cleanup(): void {
   if (removed) commit(next);
 }
 
-/** Re-applies placements and removes placeholders until nothing changes, then waits for a save
- * of that state; repeats when X brought an older state back after the save. */
-async function finalize(placed: Placed[], failed: Failed[], saves: ReturnType<typeof watchSaves>): Promise<boolean> {
+/** Re-applies placements and removes placeholders until nothing changes, then has X save that
+ * final state on its own and reports what X answered (null = no answer in time). */
+async function finalize(placed: Placed[], failed: Failed[], saves: SaveWatcher): Promise<SaveOutcome | null> {
   const tidy = (): boolean => {
     const edited = lastEdit;
     settle(placed, failed);
@@ -248,7 +249,7 @@ async function finalize(placed: Placed[], failed: Failed[], saves: ReturnType<ty
   };
   for (let pass = 0; pass < 3; pass++) {
     for (let round = 0; round < 5 && (tidy() || round === 0); round++) await sleep(1000);
-    const saved = await saves.savedAfter(lastEdit, SAVE_TIMEOUT_MS);
+    await saves.contentAfter(lastEdit, SAVE_TIMEOUT_MS);
     await sleep(1000);
     if (tidy()) continue;
     // X sometimes sends an older upload-triggered save right next to its debounced one and the
@@ -257,16 +258,25 @@ async function finalize(placed: Placed[], failed: Failed[], saves: ReturnType<ty
     commit(extra.editorState);
     await sleep(300);
     commit(removeBlock(editorState(), extra.key));
-    return (await saves.savedAfter(lastEdit, SAVE_TIMEOUT_MS)) && saved;
+    return saves.contentAfter(lastEdit, SAVE_TIMEOUT_MS);
   }
-  return false;
+  return null;
+}
+
+/** Turns X's answer to the final save into the run's error, if any. */
+export function saveError(outcome: SaveOutcome | null): string | undefined {
+  if (!outcome) return '未确认 X 已保存';
+  return outcome.ok ? undefined : `X 拒绝保存：${outcome.error}`;
 }
 
 export async function runWrite(req: MainWriteRequest, io: WriteIO): Promise<MainResult> {
   const result = emptyMainResult();
   let placed: (Placed & ImageMarker)[] = [];
   const failed: Failed[] = [];
-  const saves = watchSaves();
+  if (req.blocks.length > ARTICLE_BLOCK_LIMIT) return { ...result, error: `内容超过 X 的 ${ARTICLE_BLOCK_LIMIT} 块上限` };
+  const saves = watchSaves(window);
+  /** Set once our content is in the editor; before that a failure leaves the draft untouched. */
+  let touched = false;
   /** Counts only images still in the editor: X can drop one even after it was placed. */
   const audit = () => {
     const media = listMedia(editorState().getCurrentContent());
@@ -292,7 +302,10 @@ export async function runWrite(req: MainWriteRequest, io: WriteIO): Promise<Main
 
     io.progress('text', '写入正文');
     let out = applyWrite(editorState(), req.blocks, mode, req.runId);
+    const total = out.editorState.getCurrentContent().getBlockMap().size;
+    if (total > ARTICLE_BLOCK_LIMIT) throw new Error(`内容超过 X 的 ${ARTICLE_BLOCK_LIMIT} 块上限（追加后共 ${total} 块）`);
     for (let attempt = 0; ; attempt++) {
+      touched = true;
       commit(out.editorState);
       await sleep(1500);
       const first = out.keys[0];
@@ -349,14 +362,14 @@ export async function runWrite(req: MainWriteRequest, io: WriteIO): Promise<Main
     placed = placed.filter((p) => !lost.includes(p));
     for (const p of lost) await placeImage(p, markers.findIndex((m) => m.marker === p.marker));
     io.progress('cleanup', '等待 X 自动保存');
-    if (!(await finalize(placed, failed, saves))) result.warnings.push('未确认 X 已保存最终内容，请检查草稿');
+    result.error = saveError(await finalize(placed, failed, saves));
     audit();
     if (hasMarkers(editorState().getCurrentContent())) result.warnings.push('仍有占位符残留');
     result.articleId = articleIdFromUrl(location.href) ?? result.articleId;
     return result;
   } catch (e) {
     try {
-      if (findDraftNode()) {
+      if (touched && findDraftNode()) {
         await finalize(placed, failed, saves);
         audit();
       }
