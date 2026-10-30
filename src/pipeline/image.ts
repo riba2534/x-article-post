@@ -69,12 +69,15 @@ export function svgIntrinsicSize(svg: string): { width: number; height: number }
   return sizeOf(new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement);
 }
 
+const LOAD_TIMEOUT_MS = 30_000;
+
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
+    const timer = setTimeout(() => reject(new Error('图片解码超时')), LOAD_TIMEOUT_MS);
     img.decoding = 'async';
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('图片无法解码'));
+    img.onload = () => (clearTimeout(timer), resolve(img));
+    img.onerror = () => (clearTimeout(timer), reject(new Error('图片无法解码')));
     img.src = src;
   });
 }

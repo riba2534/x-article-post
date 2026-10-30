@@ -17,6 +17,20 @@ const TABLE_CSS = `
 .xap-table a{color:#1d9bf0;text-decoration:none}
 `;
 
+// img.decode() never settles in offscreen documents, so wait for load/error with a cap instead.
+export function imageLoaded(img: HTMLImageElement, timeoutMs = 10_000): Promise<void> {
+  if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    img.addEventListener('load', done, { once: true });
+    img.addEventListener('error', done, { once: true });
+  });
+}
+
 /** Cell images go through the same download limits and normalization as block images. */
 async function inlineImages(root: HTMLElement): Promise<void> {
   await mapLimit([...root.querySelectorAll('img')], FETCH_CONCURRENCY, async (img) => {
@@ -24,7 +38,7 @@ async function inlineImages(root: HTMLElement): Promise<void> {
       const { bytes, contentType } = await fetchImageBytes(img.getAttribute('src') ?? '');
       const image = await normalizeImage(bytes, contentType);
       img.setAttribute('src', `data:${image.mime};base64,${bytesToBase64(image.bytes)}`);
-      await img.decode().catch(() => undefined);
+      await imageLoaded(img);
     } catch {
       img.replaceWith(document.createTextNode(img.getAttribute('alt') || '[图片]'));
     }
