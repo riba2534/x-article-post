@@ -102,7 +102,7 @@ async function serve(port) {
   process.once('SIGTERM', stop);
 }
 
-/** Returns the process exit code. */
+/** Returns the process exit code: 0 ok, 1 request failed, 2 usage error. */
 export async function main(argv = process.argv.slice(2)) {
   try {
     const { values, positionals } = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true });
@@ -154,8 +154,10 @@ export async function main(argv = process.argv.slice(2)) {
     }
   } catch (err) {
     if (err instanceof ApiError) console.error(`error ${err.status || ''} ${err.code}: ${err.message}`.replace('  ', ' '));
-    else if (err instanceof UsageError || err?.code === 'ERR_PARSE_ARGS_UNKNOWN_OPTION' || err?.code === 'ENOENT') console.error(`error: ${err.message}`);
-    else console.error(err);
+    else if (err instanceof UsageError || err?.code?.startsWith?.('ERR_PARSE_ARGS') || err?.code === 'ENOENT') {
+      console.error(`error: ${err.message}`);
+      return 2;
+    } else console.error(err);
     return 1;
   }
 }

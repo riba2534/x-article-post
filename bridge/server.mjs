@@ -47,14 +47,32 @@ export function createBridgeServer(opts) {
   /** @type {import('ws').WebSocket | null} */
   let ext = null;
   let draftInFlight = false;
-  /** @type {Map<string, { resolve: (v: unknown) => void, reject: (e: Error) => void, timer: NodeJS.Timeout }>} */
+  /** Commands awaiting an answer, keyed by id; each remembers the socket it was sent on. */
+  /** @type {Map<string, { socket: import('ws').WebSocket, resolve: (v: unknown) => void, reject: (e: Error) => void, timer: NodeJS.Timeout }>} */
   const pending = new Map();
 
-  function rejectAll(err) {
+  /** A replaced connection is closed once it has no commands left to answer. */
+  function closeIfReplacedAndIdle(socket) {
+    if (socket !== ext && ![...pending.values()].some((p) => p.socket === socket)) socket.close(4000, 'replaced by a newer connection');
+  }
+
+  /** Removes a pending command. */
+  function take(id) {
+    const p = pending.get(id);
+    if (!p) return undefined;
+    pending.delete(id);
+    clearTimeout(p.timer);
+    closeIfReplacedAndIdle(p.socket);
+    return p;
+  }
+
+  /** Rejects pending commands of one socket, or of all sockets when omitted. */
+  function rejectPending(err, socket) {
     for (const [id, p] of pending) {
+      if (socket && p.socket !== socket) continue;
+      pending.delete(id);
       clearTimeout(p.timer);
       p.reject(err);
-      pending.delete(id);
     }
   }
 
@@ -64,26 +82,24 @@ export function createBridgeServer(opts) {
     const socket = ext;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        pending.delete(id);
+        take(id);
         reject(new BridgeError(504, 'timeout', `Extension did not answer "${method}" within ${Math.round(timeoutMs / 1000)} s`));
       }, timeoutMs);
-      pending.set(id, { resolve, reject, timer });
+      pending.set(id, { socket, resolve, reject, timer });
       socket.send(JSON.stringify({ id, method, params }));
     });
   }
 
-  function onExtensionMessage(msg) {
+  function onExtensionMessage(socket, msg) {
     if (msg.type === 'pong') return;
+    if (pending.get(msg.id)?.socket !== socket) return;
     if (msg.type === 'progress') {
       const p = msg.progress;
-      if (p && pending.has(msg.id)) log(`  [${p.phase}] ${p.message}${p.total ? ` (${p.current ?? 0}/${p.total})` : ''}`);
+      if (p) log(`  [${p.phase}] ${p.message}${p.total ? ` (${p.current ?? 0}/${p.total})` : ''}`);
       return;
     }
     if (msg.type !== 'response') return;
-    const p = pending.get(msg.id);
-    if (!p) return;
-    pending.delete(msg.id);
-    clearTimeout(p.timer);
+    const p = take(msg.id);
     if (msg.ok) p.resolve(msg.result);
     else {
       const code = String(msg.error?.code ?? 'error');
@@ -121,8 +137,10 @@ export function createBridgeServer(opts) {
         }
         clearTimeout(helloTimer);
         authed = true;
-        if (ext && ext !== socket) ext.close(4000, 'replaced by a newer connection');
+        const previous = ext;
         ext = socket;
+        // The old connection keeps answering commands already sent on it, then closes.
+        if (previous) closeIfReplacedAndIdle(previous);
         log(`extension connected (v${String(msg.version ?? '')})`);
         socket.send(JSON.stringify({ type: 'welcome', protocol: PROTOCOL_VERSION, version }));
         pingTimer = setInterval(() => {
@@ -131,16 +149,16 @@ export function createBridgeServer(opts) {
         }, t.ping);
         return;
       }
-      if (socket === ext) onExtensionMessage(msg);
+      onExtensionMessage(socket, msg);
     });
 
     socket.on('close', () => {
       clearTimeout(helloTimer);
       clearInterval(pingTimer);
+      rejectPending(new BridgeError(503, 'not-connected', 'Extension disconnected before answering'), socket);
       if (socket === ext) {
         ext = null;
         log('extension disconnected');
-        rejectAll(new BridgeError(503, 'not-connected', 'Extension disconnected before answering'));
       }
     });
     socket.on('error', () => {});
@@ -282,7 +300,7 @@ export function createBridgeServer(opts) {
       return ext !== null;
     },
     close() {
-      rejectAll(new BridgeError(503, 'not-connected', 'Bridge is shutting down'));
+      rejectPending(new BridgeError(503, 'not-connected', 'Bridge is shutting down'));
       for (const client of wss.clients) client.terminate();
       wss.close();
       server.closeAllConnections();

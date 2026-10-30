@@ -23,8 +23,8 @@ Every HTTP request needs `Authorization: Bearer <token>`; the CLI and `scripts/x
 
 Prefer whichever is available, in this order:
 
-- `xap` CLI (`node <path>/xap.mjs <command>`): `status`, `convert <file.md> [--json]`, `draft <file.md|-> [--title T] [--article-id ID --mode append|replace] [--json]`. Exit code 0 means success.
-- `scripts/xap_api.mjs` in this skill (zero-dependency Node): `status`, `current`, `convert <file>`, `draft <file> [--title T] [--article-id ID --mode append|replace]`. Prints the JSON response.
+- `xap` CLI (`node <path>/xap.mjs <command>`): `status`, `convert <file.md> [--json]`, `draft <file.md|-> [--title T] [--article-id ID --mode append|replace] [--json]`. Exit codes: 0 success, 1 request failed or the draft returned `ok:false`, 2 usage error.
+- `scripts/xap_api.mjs` in this skill (zero-dependency Node): `status`, `current`, `convert <file>`, `draft <file> [--title T] [--article-id ID --mode append|replace]`. Prints the JSON response; same exit codes and error format as the CLI.
 - `curl` against the HTTP API, see `references/api.md` for every endpoint, field and error.
 
 Drafts with images can take several minutes (uploads run 10–90 s each). Run draft commands with a timeout of at least 11 minutes, and do not retry while one is still running.
@@ -82,7 +82,7 @@ To find the draft that is open in the browser right now: `node scripts/xap_api.m
 
 ## Errors
 
-HTTP errors are `{"error":{"code","message"}}`; the CLI prints `error <status> <code>: <message>` and exits 1.
+HTTP errors are `{"error":{"code","message"}}`; the CLI and `scripts/xap_api.mjs` print `error <status> <code>: <message>` to stderr and exit 1.
 
 | Status | Code | Meaning | What to do |
 |---|---|---|---|

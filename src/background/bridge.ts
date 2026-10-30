@@ -1,5 +1,4 @@
 // Agent bridge client: connects the background to the local `xap` bridge and runs its commands.
-import { convertMarkdown } from '../core';
 import { loadSettings, mergeSettings, SETTINGS_KEY, type Settings } from '../shared/settings';
 import { ensureOffscreen } from './offscreen';
 import { getXTabStatus, isBusy, runWrite, setBridgeStatusProvider } from './writer';
@@ -19,7 +18,6 @@ function defaultDeps(): BridgeInitDeps {
     createSocket: (url) => new WebSocket(url) as unknown as SocketLike,
     isBusy,
     getXTabStatus,
-    convert: convertMarkdown,
     ensureOffscreen,
     prepare: (message) => chrome.runtime.sendMessage(message) as Promise<PrepareReply | undefined>,
     runWrite,

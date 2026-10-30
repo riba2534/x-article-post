@@ -21,7 +21,6 @@ export interface CommandDeps {
   bridgeStatus(): ExtensionStatus['bridge'];
   isBusy(): boolean;
   getXTabStatus(): Promise<ExtensionStatus['xTab']>;
-  convert(markdown: string, options: Partial<ConvertOptions>): ArticleDoc;
   ensureOffscreen(): Promise<void>;
   /** Sends `xap:prepare` to the offscreen document. */
   prepare(message: PrepareMessage): Promise<PrepareReply | undefined>;
@@ -75,10 +74,6 @@ export function createCommandHandler(deps: CommandDeps) {
     switch (cmd.method) {
       case 'status':
         return status();
-      case 'convert': {
-        if (typeof params.markdown !== 'string') throw new CommandError('bad-request', 'markdown must be a string');
-        return deps.convert(params.markdown, isObject(params.options) ? (params.options as Partial<ConvertOptions>) : {});
-      }
       case 'draft':
         return draft(cmd.id, params, send);
       case 'snapshot': {

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { createBridgeServer, PROTOCOL_VERSION } from './server.mjs';
 import { ensureToken, maskToken, readToken, tokenMatches } from './token.mjs';
@@ -225,6 +227,62 @@ describe('forwarding to the extension', () => {
     expect(res.status).toBe(503);
   });
 
+  it('lets a replaced connection finish its pending draft, then closes it', async () => {
+    await start();
+    let cmd;
+    const old = connectExtension({ handler: (c) => (cmd = c) });
+    await old.result;
+    const draft = api('POST', '/v1/drafts', { markdown: 'a' });
+    await vi.waitFor(() => expect(cmd).toBeDefined());
+    const fresh = connectExtension({ handler: (c, ws) => respond(ws, c.id, { version: 'new' }) });
+    await fresh.result;
+    const oldClosed = new Promise((resolve) => old.ws.on('close', resolve));
+    respond(old.ws, cmd.id, { ok: true, url: 'from-old' });
+    expect(await draft).toEqual({ status: 200, body: { ok: true, url: 'from-old' } });
+    expect(await oldClosed).toBe(4000);
+    // New commands go to the new connection.
+    expect((await api('GET', '/v1/status')).body.extension).toEqual({ version: 'new' });
+    fresh.ws.close();
+  });
+
+  it('rejects a replaced connection’s pending draft with 503 when it closes', async () => {
+    await start();
+    let cmd;
+    const old = connectExtension({ handler: (c) => (cmd = c) });
+    await old.result;
+    const draft = api('POST', '/v1/drafts', { markdown: 'a' });
+    await vi.waitFor(() => expect(cmd).toBeDefined());
+    const fresh = connectExtension({ handler: () => {} });
+    await fresh.result;
+    old.ws.close();
+    const res = await draft;
+    expect(res.status).toBe(503);
+    expect(res.body.error.code).toBe('not-connected');
+    expect(server.connected).toBe(true);
+    fresh.ws.close();
+  });
+
+  it('ignores responses from a socket the command was not sent on', async () => {
+    await start();
+    let draftCmd;
+    const old = connectExtension({ handler: (c) => (draftCmd = c) });
+    await old.result;
+    const draft = api('POST', '/v1/drafts', { markdown: 'a' });
+    await vi.waitFor(() => expect(draftCmd).toBeDefined());
+    let snapCmd;
+    const fresh = connectExtension({ handler: (c) => (snapCmd = c) });
+    await fresh.result;
+    const snapshot = api('GET', '/v1/drafts/current');
+    await vi.waitFor(() => expect(snapCmd).toBeDefined());
+    respond(old.ws, snapCmd.id, { from: 'old' });
+    respond(fresh.ws, draftCmd.id, { from: 'fresh' });
+    respond(fresh.ws, snapCmd.id, { from: 'fresh' });
+    respond(old.ws, draftCmd.id, { from: 'old' });
+    expect((await snapshot).body).toEqual({ from: 'fresh' });
+    expect((await draft).body).toEqual({ from: 'old' });
+    fresh.ws.close();
+  });
+
   it('pings the extension', async () => {
     await start({ ping: 50 });
     const ext = connectExtension({ handler: () => {} });
@@ -268,6 +326,50 @@ describe('token file', () => {
   });
 });
 
+describe('skill script xap_api.mjs', () => {
+  const script = fileURLToPath(new URL('../skills/x-article-post/scripts/xap_api.mjs', import.meta.url));
+  let md;
+
+  const run = (...args) =>
+    new Promise((resolve) => {
+      execFile(process.execPath, [script, ...args], { env: { ...process.env, XAP_TOKEN: TOKEN, XAP_PORT: String(port) } }, (err, stdout, stderr) =>
+        resolve({ code: err ? err.code : 0, stdout, stderr }),
+      );
+    });
+
+  beforeEach(async () => {
+    md = path.join(TMP, 'skill.md');
+    await writeFile(md, '# hi');
+  });
+
+  it('exits 1 with the CLI error format on HTTP errors', async () => {
+    await start();
+    const res = await run('draft', md);
+    expect(res.code).toBe(1);
+    expect(res.stderr.trim()).toBe('error 503 not-connected: Extension is not connected to the bridge');
+  });
+
+  it('exits 1 when the draft returns ok:false and 0 when ok', async () => {
+    await start();
+    let ok = false;
+    const ext = connectExtension({ handler: (cmd, ws) => respond(ws, cmd.id, { ok, error: ok ? undefined : 'editor not found' }) });
+    await ext.result;
+    const failed = await run('draft', md);
+    expect(failed.code).toBe(1);
+    expect(JSON.parse(failed.stdout).error).toBe('editor not found');
+    ok = true;
+    expect((await run('draft', md, '--article-id', '12', '--mode', 'replace')).code).toBe(0);
+    ext.ws.close();
+  });
+
+  it('exits 2 for --mode without --article-id', async () => {
+    await start();
+    const res = await run('draft', md, '--mode', 'replace');
+    expect(res.code).toBe(2);
+    expect(res.stderr).toContain('--mode requires --article-id');
+  });
+});
+
 describe('CLI and client', () => {
   let dir;
   beforeEach(async () => {
@@ -300,7 +402,7 @@ describe('CLI and client', () => {
     expect(out.mock.calls.map((c) => c[0]).join('\n')).toContain('# hello');
     expect(await main(['draft', md, '--port', String(port)])).toBe(1);
     expect(err.mock.calls.at(-1)[0]).toContain('not-connected');
-    expect(await main(['draft', md, '--mode', 'replace', '--port', String(port)])).toBe(1);
-    expect(await main(['nope'])).toBe(1);
+    expect(await main(['draft', md, '--mode', 'replace', '--port', String(port)])).toBe(2);
+    expect(await main(['nope'])).toBe(2);
   });
 });
