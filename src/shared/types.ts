@@ -224,8 +224,7 @@ export type RuntimeMessage =
   | { type: 'xap:result'; result: WriteResult }
   | { type: 'xap:status' }
   /** Background -> offscreen: run the pipeline for an agent request. */
-  | { type: 'xap:prepare'; requestId: string; markdown: string; options: Partial<ConvertOptions>; target: WriteTarget; title?: string }
-  | { type: 'xap:convert'; requestId: string; markdown: string; options: Partial<ConvertOptions> };
+  | { type: 'xap:prepare'; requestId: string; markdown: string; options: Partial<ConvertOptions>; target: WriteTarget; title?: string };
 
 export interface ExtensionStatus {
   version: string;
@@ -243,7 +242,7 @@ export const BRIDGE_PROTOCOL_VERSION = 1;
 /** Bridge -> extension. */
 export interface BridgeCommand {
   id: string;
-  method: 'status' | 'convert' | 'draft' | 'snapshot';
+  method: 'status' | 'draft' | 'snapshot';
   params: Record<string, unknown>;
 }
 
