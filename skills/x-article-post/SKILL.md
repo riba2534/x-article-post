@@ -11,11 +11,12 @@ Scope: create a new draft or write into an existing draft. There is no publish e
 
 ## Prerequisites
 
-All three must hold before a draft can be written. Check them in order and tell the user exactly which one is missing; setup steps 1 and 3 need the user.
+Items 1–3 must hold before a draft can be written; item 4 is needed for remote images. Check them in order and tell the user exactly which one is missing; setup steps 1 and 3 need the user.
 
 1. The extension is installed in Chrome (from the project's release zip, loaded on `chrome://extensions`) and the user is logged in to x.com in that browser.
 2. The bridge is running: `node xap.mjs serve` (release asset `xap.mjs`, Node ≥ 22; inside the repo `node bridge/xap.mjs serve` or `npm run bridge`). It keeps running in a terminal; start it in the background if you start it yourself. The first run creates the token file `~/.config/x-article-post/token` (mode 0600).
 3. The extension is paired: side panel → 设置 → Agent 桥接 → turn it on, URL `ws://127.0.0.1:17345/ext`, Token = output of `xap token`. The user pastes the token; never print it into chat or logs beyond what pairing needs.
+4. For Markdown with remote images: side panel → 设置 → 图片 → 「允许读取所有网站图片」 is on. Agent-started writes cannot show Chrome's permission prompt, so without it images and the cover are skipped and listed in `warnings` (`图片未能准备：… Failed to fetch`).
 
 Every HTTP request needs `Authorization: Bearer <token>`; the CLI and `scripts/xap_api.mjs` read the token file automatically.
 
