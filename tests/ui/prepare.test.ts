@@ -9,7 +9,7 @@ vi.mock('../../src/pipeline/mermaid', () => ({
 }));
 vi.mock('../../src/pipeline/table', () => ({ tableToPng: vi.fn(async () => Promise.reject(new Error('foreignObject tainted'))) }));
 
-const { assembleRequest, collectImages, collectPermissionOrigins, prepareWrite, sourceUrls } = await import('../../src/pipeline/prepare');
+const { assembleRequest, collectImages, collectPermissionOrigins, prepareWrite, sourceUrls, splitTableMarkdown } = await import('../../src/pipeline/prepare');
 const { convertMarkdown } = await import('../../src/core/index');
 
 const png = (n = 1) => ({ bytes: new Uint8Array(n).fill(7), mime: 'image/png', width: 10, height: 5 });
@@ -32,7 +32,7 @@ describe('collectPermissionOrigins', () => {
     expect(collectPermissionOrigins(sampleDoc())).toEqual(['https://img.example.com/*', 'https://cdn.example.org/*']);
   });
 
-  it('ignores data: URIs, invalid URLs and mermaid', () => {
+  it('ignores data: URIs, invalid URLs, private hosts and mermaid', () => {
     const doc: ArticleDoc = {
       ...sampleDoc(),
       cover: 'data:image/png;base64,AAAA',
@@ -42,7 +42,7 @@ describe('collectPermissionOrigins', () => {
         { kind: 'image', source: { type: 'mermaid', code: 'graph TD; A-->B' }, alt: '', fallbackText: '' },
       ],
     };
-    expect(collectPermissionOrigins(doc)).toEqual(['http://localhost/*']);
+    expect(collectPermissionOrigins(doc)).toEqual([]);
   });
 
   it('finds inline and reference images in tables, ignoring raw HTML like the renderer does', () => {
@@ -126,6 +126,36 @@ describe('assembleRequest', () => {
   });
 });
 
+describe('splitTableMarkdown', () => {
+  const head = '| a | b |\n| --- | --- |';
+  const rows = Array.from({ length: 6 }, (_, i) => `| r${i} | ${'x'.repeat(20)} |`);
+  const table = [head, ...rows].join('\n');
+
+  it('keeps short tables whole', () => {
+    expect(splitTableMarkdown(table, 10_000)).toEqual([table]);
+  });
+
+  it('splits by rows within the limit and repeats the header', () => {
+    const limit = head.length + 2 * (rows[0].length + 1);
+    const parts = splitTableMarkdown(table, limit);
+    expect(parts).toHaveLength(3);
+    for (const p of parts) {
+      expect(p.startsWith(`${head}\n`)).toBe(true);
+      expect(p.length).toBeLessThanOrEqual(limit);
+    }
+    expect(parts.flatMap((p) => p.split('\n').slice(2))).toEqual(rows);
+  });
+
+  it('splits a failed table image fallback into several MARKDOWN blocks', async () => {
+    const big = [head, ...Array.from({ length: 400 }, (_, i) => `| ![i](https://a.example/${i}.png) | ${'y'.repeat(30)} |`)].join('\n');
+    const doc: ArticleDoc = { ...sampleDoc(), cover: undefined, blocks: [{ kind: 'image', source: { type: 'table', markdown: big }, alt: '表格', fallbackText: big }] };
+    const { request, doc: out } = await assembleRequest(doc, { type: 'new' }, () => Promise.reject(new Error('x')));
+    expect(request.blocks.length).toBeGreaterThan(1);
+    expect(request.blocks.every((b) => b.kind === 'markdown' && b.role === 'table')).toBe(true);
+    expect(out.warnings.some((w) => w.message.includes('已按行拆成'))).toBe(true);
+  });
+});
+
 describe('prepareWrite', () => {
   beforeEach(() => {
     convert.doc = sampleDoc();
@@ -145,6 +175,17 @@ describe('prepareWrite', () => {
     expect(request.blocks[16]).toMatchObject({ kind: 'markdown', role: 'table' });
     expect(doc.warnings.filter((w) => w.code === 'image-unsupported')).toHaveLength(3);
     expect(doc.warnings.some((w) => w.message.includes('HTTP 404'))).toBe(true);
+  });
+
+  it('never requests private-network image URLs and falls back with a warning', async () => {
+    convert.doc = { ...sampleDoc(), cover: undefined, blocks: [{ kind: 'image', source: { type: 'url', url: 'http://192.168.31.1/cgi-bin/luci' }, alt: '路由器', fallbackText: '[图片：路由器]' }] };
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const { request, doc } = await prepareWrite('x', {}, { type: 'new' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(request.blocks).toEqual([{ kind: 'text', type: 'unstyled', text: '[图片：路由器]', styles: [], links: [] }]);
+    expect(doc.warnings.at(-1)).toMatchObject({ code: 'image-unsupported' });
+    expect(doc.warnings.at(-1)!.message).toContain('内网');
   });
 
   it('uses the title override', async () => {

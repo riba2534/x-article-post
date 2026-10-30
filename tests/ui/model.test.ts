@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { markdownToHtml } from '../../src/pipeline/markdown-html';
-import { buildTarget, countWords, degradeLabels, groupWarnings, segmentInline } from '../../src/sidepanel/model';
+import { buildTarget, countWords, degradeLabels, groupWarnings, retryTarget, segmentInline } from '../../src/sidepanel/model';
 import { sampleDoc } from './fixtures';
 
 describe('countWords', () => {
@@ -70,6 +70,18 @@ describe('buildTarget', () => {
     expect(buildTarget('new', undefined)).toEqual({ type: 'new' });
     expect(buildTarget('append', undefined)).toBeNull();
     expect(buildTarget('replace', '123')).toEqual({ type: 'existing', articleId: '123', mode: 'replace' });
+  });
+});
+
+describe('retryTarget', () => {
+  it('retries a failed new draft into the draft it created, replacing it', () => {
+    expect(retryTarget({ type: 'new' }, { articleId: '99' })).toEqual({ type: 'existing', articleId: '99', mode: 'replace' });
+  });
+
+  it('keeps the original target otherwise', () => {
+    const append = { type: 'existing', articleId: '1', mode: 'append' } as const;
+    expect(retryTarget({ type: 'new' }, {})).toEqual({ type: 'new' });
+    expect(retryTarget(append, { articleId: '1' })).toBe(append);
   });
 });
 

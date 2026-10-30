@@ -14,8 +14,9 @@ import type {
   WriteRequest,
   WriteTarget,
 } from '../shared/types';
+import { MARKDOWN_BLOCK_LIMIT } from '../shared/types';
 import { errorMessage } from './errors';
-import { FETCH_CONCURRENCY, fetchImageBytes, mapLimit } from './fetch';
+import { FETCH_CONCURRENCY, fetchImageBytes, isPublicHttpUrl, mapLimit } from './fetch';
 import { bytesToBase64, extensionFor, normalizeImage, type NormalizedImage } from './image';
 import { markdownImageUrls } from './markdown-html';
 import { mermaidToPng } from './mermaid';
@@ -73,7 +74,8 @@ export function collectPermissionOrigins(doc: ArticleDoc): string[] {
       } catch {
         continue;
       }
-      if (url.protocol === 'http:' || url.protocol === 'https:') origins.add(`${url.protocol}//${url.hostname}/*`);
+      // Same rule fetchImageBytes enforces: only public http(s) hosts are ever fetched.
+      if (isPublicHttpUrl(url)) origins.add(`${url.protocol}//${url.hostname}/*`);
     }
   }
   return [...origins];
@@ -83,6 +85,28 @@ function describe(source: ImageSource): string {
   if (source.type === 'mermaid') return 'Mermaid 图';
   if (source.type === 'table') return '表格图片';
   return source.url.startsWith('data:') ? '内嵌图片' : source.url;
+}
+
+/**
+ * Splits a GFM table into chunks of at most `limit` characters by rows, repeating the header and
+ * delimiter rows in each chunk. Must match the rule core applies to plain tables
+ * (src/core/convert.ts, table splitting), which core keeps private.
+ */
+export function splitTableMarkdown(markdown: string, limit = MARKDOWN_BLOCK_LIMIT): string[] {
+  if (markdown.length <= limit) return [markdown];
+  const [header = '', delimiter = '', ...rows] = markdown.split('\n');
+  const head = `${header}\n${delimiter}`;
+  const chunks: string[] = [];
+  let chunk = head;
+  for (const row of rows) {
+    if (chunk !== head && chunk.length + 1 + row.length > limit) {
+      chunks.push(chunk);
+      chunk = head;
+    }
+    chunk += `\n${row}`;
+  }
+  chunks.push(chunk);
+  return chunks;
 }
 
 function fallbackBlock(text: string): WriteBlock {
@@ -134,11 +158,15 @@ export async function assembleRequest(
     ids.set(ref.key, id);
   });
 
-  const blocks = doc.blocks.map((block: Block, i): WriteBlock => {
+  const blocks = doc.blocks.flatMap((block: Block, i): WriteBlock | WriteBlock[] => {
     if (block.kind !== 'image') return block;
     const imageId = ids.get(i);
     if (imageId) return { kind: 'image', imageId, alt: block.alt, fallbackText: block.fallbackText };
-    if (block.source.type === 'table') return { kind: 'markdown', role: 'table', markdown: block.source.markdown };
+    if (block.source.type === 'table') {
+      const parts = splitTableMarkdown(block.source.markdown);
+      if (parts.length > 1) warnings.push({ code: 'other', message: `表格超过 ${MARKDOWN_BLOCK_LIMIT} 字符，已按行拆成 ${parts.length} 个表格` });
+      return parts.map((markdown) => ({ kind: 'markdown', role: 'table', markdown }));
+    }
     return fallbackBlock(block.fallbackText || block.alt || '[图片]');
   });
 

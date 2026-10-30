@@ -1,5 +1,5 @@
 // Pure view-model helpers for the side panel (no DOM, unit-tested).
-import type { ArticleDoc, InlineStyle, TextBlock, Warning, WarningCode, WritePhase, WriteTarget } from '../shared/types';
+import type { ArticleDoc, InlineStyle, TextBlock, Warning, WarningCode, WritePhase, WriteResult, WriteTarget } from '../shared/types';
 
 /** CJK characters count one each; runs of Latin letters/digits count as words. */
 export function countWords(text: string): number {
@@ -110,6 +110,14 @@ export const PHASE_LABELS: Record<WritePhase, string> = {
 };
 
 export type TargetMode = 'new' | 'append' | 'replace';
+
+/**
+ * A failed "new draft" run that already created a draft retries into that draft (replace),
+ * so retrying never leaves a second, half-written draft behind.
+ */
+export function retryTarget(original: WriteTarget, result: Pick<WriteResult, 'articleId'>): WriteTarget {
+  return original.type === 'new' && result.articleId ? buildTarget('replace', result.articleId)! : original;
+}
 
 export function buildTarget(mode: TargetMode, articleId: string | undefined): WriteTarget | null {
   if (mode === 'new') return { type: 'new' };

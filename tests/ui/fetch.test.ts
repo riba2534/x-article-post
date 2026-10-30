@@ -18,6 +18,12 @@ describe('isPrivateHost', () => {
     'http://127.0.0.1/',
     'http://127.1/',
     'http://0x7f000001/',
+    'http://2130706433/',
+    'http://017700000001/',
+    'http://[::127.0.0.1]/',
+    'http://router/',
+    'http://nas.lan/',
+    'http://svc.internal/',
     'http://10.1.2.3/',
     'http://172.16.0.1/',
     'http://172.31.255.255/',
@@ -52,10 +58,16 @@ describe('fetchImageBytes', () => {
     await expect(fetchImageBytes('https://a.example/x.png', { fetchImpl })).rejects.toThrow('内网');
   });
 
-  it('allows redirects between public hosts and from private hosts', async () => {
-    const ok = (url: string) => vi.fn(async () => response('img', { url, redirected: true }));
-    await expect(fetchImageBytes('https://a.example/x.png', { fetchImpl: ok('https://cdn.example/x.png') })).resolves.toBeTruthy();
-    await expect(fetchImageBytes('http://localhost:8080/x.png', { fetchImpl: ok('http://127.0.0.1:8080/y.png') })).resolves.toBeTruthy();
+  it('allows redirects between public hosts', async () => {
+    const fetchImpl = vi.fn(async () => response('img', { url: 'https://cdn.example/x.png', redirected: true }));
+    await expect(fetchImageBytes('https://a.example/x.png', { fetchImpl })).resolves.toBeTruthy();
+  });
+
+  // isPrivateHost has the full host matrix; this only checks no request is sent.
+  it.each(['http://2130706433/a.png', 'http://[::ffff:127.0.0.1]/a.png', 'http://169.254.169.254/latest/meta-data'])('refuses %s without sending a request', async (url) => {
+    const fetchImpl = vi.fn();
+    await expect(fetchImageBytes(url, { fetchImpl })).rejects.toThrow('内网');
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('enforces the size cap from content-length and from the stream', async () => {
