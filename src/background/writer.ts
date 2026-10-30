@@ -1,7 +1,7 @@
 // Background side of the writer: picks/opens the X tab and drives the content script over a port.
 // It only ever creates or edits drafts; nothing here can publish.
 import { dropImages, loadImage } from '../shared/image-store';
-import type { ExtensionStatus, RuntimeMessage, WriteProgress, WriteRequest, WriteResult } from '../shared/types';
+import { ARTICLE_BLOCK_LIMIT, type ExtensionStatus, type RuntimeMessage, type WriteProgress, type WriteRequest, type WriteResult } from '../shared/types';
 import { WRITE_PORT, articleIdFromUrl, editUrl, type EditorStatus, type MainResult, type PortDown, type PortUp } from '../content/protocol';
 import { emptyMainResult, errorMessage } from '../content/util';
 import { findStatusTab, prepareTab, sendToTab } from './writer/tabs';
@@ -88,6 +88,8 @@ function drive(tabId: number, request: WriteRequest, articleId: string, run: Run
 
 export async function runWrite(request: WriteRequest, onProgress: (p: WriteProgress) => void): Promise<WriteResult> {
   if (active) return emptyResult(request.runId, 'busy');
+  // X rejects saves of longer articles; refuse before touching any tab or draft.
+  if (request.blocks.length > ARTICLE_BLOCK_LIMIT) return emptyResult(request.runId, `内容超过 X 的 ${ARTICLE_BLOCK_LIMIT} 块上限`);
   const run: Run = { runId: request.runId, cancelled: false };
   active = run;
   const progress = (p: WriteProgress) => {
