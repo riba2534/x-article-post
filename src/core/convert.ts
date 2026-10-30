@@ -14,7 +14,7 @@ import {
   type Warning,
   type WarningCode,
 } from '../shared/types';
-import { decodeEntities, tokenizeHtml, type HtmlToken } from './html';
+import { decodeEntities, RAW_TEXT_TAGS, tokenizeHtml, type HtmlToken } from './html';
 import { normalizeLanguage } from './lang';
 import { texToUnicode, toScript } from './math-unicode';
 import { parseMarkdown, type MdNode } from './parse';
@@ -23,14 +23,13 @@ import { TextBuilder } from './text';
 interface Env {
   /** Block type for paragraphs in this container. */
   textType: TextBlockType;
-  quote: boolean;
   /** Directly in the document root (not inside a list, quote or footnote). */
   root: boolean;
 }
 
-const ROOT_ENV: Env = { textType: 'unstyled', quote: false, root: true };
-const NESTED_ENV: Env = { textType: 'unstyled', quote: false, root: false };
-const QUOTE_ENV: Env = { textType: 'blockquote', quote: true, root: false };
+const ROOT_ENV: Env = { textType: 'unstyled', root: true };
+const NESTED_ENV: Env = { textType: 'unstyled', root: false };
+const QUOTE_ENV: Env = { textType: 'blockquote', root: false };
 
 const ALERTS: Record<string, string> = {
   NOTE: 'ℹ️ 注意',
@@ -57,8 +56,8 @@ const BLOCK_TAGS = new Set([
   'aside', 'main', 'figure', 'figcaption', 'details', 'summary', 'address', 'hgroup',
 ]);
 const EMBED_TAGS = new Set(['iframe', 'video', 'audio', 'embed', 'object']);
-const RAW_TEXT_TAGS = new Set(['style', 'script', 'textarea', 'title', 'template', 'noscript']);
 const MD_ESCAPE = /[\\`*_[\]<>|~$]/g;
+const DROPPED_MESSAGE = '已丢弃无法在 X 中显示的 HTML（注释、样式、脚本、小图标）';
 
 class Warnings {
   readonly list: Warning[] = [];
@@ -96,9 +95,11 @@ function codeSpan(code: string): string {
   return `${fence}${pad}${code}${pad}${fence}`;
 }
 
-function codeFence(code: string): string {
+/** Fenced code block; the fence is longer than any backtick run inside the code. */
+function fenced(code: string, lang: string): string {
   const runs = code.match(/`{3,}/g) ?? [];
-  return '`'.repeat(Math.max(3, ...runs.map((r) => r.length + 1)));
+  const fence = '`'.repeat(Math.max(3, ...runs.map((r) => r.length + 1)));
+  return `${fence}${lang}\n${code}\n${fence}`;
 }
 
 function escapeMd(text: string): string {
@@ -108,6 +109,23 @@ function escapeMd(text: string): string {
 
 function mdUrl(url: string): string {
   return /[\s()<>]/.test(url) ? `<${url.replace(/[<>]/g, encodeURIComponent)}>` : url;
+}
+
+const katexCache = new Map<string, string | null>();
+
+/** KaTeX error message for a display formula, or null when X can render it. */
+function katexError(tex: string): string | null {
+  let result = katexCache.get(tex);
+  if (result !== undefined) return result;
+  try {
+    katex.renderToString(tex, { displayMode: true, throwOnError: true, strict: 'ignore' });
+    result = null;
+  } catch (error) {
+    result = error instanceof Error ? error.message.split('\n')[0] : String(error);
+  }
+  if (katexCache.size > 500) katexCache.clear();
+  katexCache.set(tex, result);
+  return result;
 }
 
 /** Percent-encode spaces and non-ASCII only, so existing escapes such as %2F survive. */
@@ -128,21 +146,21 @@ function letterIndex(i: number): string {
   return out;
 }
 
-export class Converter {
+class Converter {
   readonly blocks: Block[] = [];
   readonly warnings = new Warnings();
   private readonly opts: ConvertOptions;
   private readonly definitions = new Map<string, string>();
   private readonly footnoteDefs = new Map<string, MdNode>();
   private readonly footnoteOrder: string[] = [];
+  private readonly footnoteIndex = new Map<string, number>();
   private topHeading = 1;
   private line: number | undefined;
   private linkDepth = 0;
-  /** Inline HTML <a> tags: whether each one opened a link range. */
-  private htmlLinks: boolean[] = [];
+  /** Open inline HTML <a> tags: the resolved URL, or null when the tag adds no link. */
+  private htmlLinks: (string | null)[] = [];
   private script: 'sup' | 'sub' | null = null;
   private cellHasImage = false;
-  private cellLinkUrls: string[] = [];
 
   constructor(
     private readonly source: string,
@@ -235,10 +253,11 @@ export class Converter {
   }
 
   private footnoteNumber(id: string): number {
-    let index = this.footnoteOrder.indexOf(id);
-    if (index < 0) {
+    let index = this.footnoteIndex.get(id);
+    if (index === undefined) {
       this.warnings.once('footnote', '脚注已改为 [n] 编号，内容附在文末「注释」', this.line);
       index = this.footnoteOrder.push(id) - 1;
+      this.footnoteIndex.set(id, index);
     }
     return index + 1;
   }
@@ -316,6 +335,11 @@ export class Converter {
     return resolved;
   }
 
+  /** Destination of a link/image, following reference definitions. */
+  private nodeUrl(node: MdNode): string {
+    return (node.identifier !== undefined && node.url === undefined ? this.definitions.get(node.identifier) : node.url) ?? '';
+  }
+
   private absolute(url: string): string | null {
     if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return normalizeUrl(url);
     if (url.startsWith('//')) return normalizeUrl(`https:${url}`);
@@ -373,18 +397,22 @@ export class Converter {
     }
   }
 
-  /** Flow children that share one text block: paragraphs join with line breaks, other blocks split it. */
-  private container(nodes: MdNode[], b: TextBuilder, env: Env) {
+  /**
+   * Flow children that share one text block: paragraphs join with line breaks, other blocks split it.
+   * `list` renders nested lists (list items flatten them instead of starting a new list).
+   */
+  private container(nodes: MdNode[], b: TextBuilder, env: Env, list?: (node: MdNode) => void) {
     for (const child of nodes) {
       this.line = child.position?.start.line ?? this.line;
       if (child.type === 'paragraph') {
         if (!b.isBlank()) b.hardBreak();
         this.inlines(child.children ?? [], b);
-      } else {
-        this.emit(b);
-        this.flow([child], env);
-        b.reset(env.textType);
+        continue;
       }
+      this.emit(b);
+      if (list && child.type === 'list') list(child);
+      else this.flow([child], env);
+      b.reset(env.textType);
     }
   }
 
@@ -403,6 +431,7 @@ export class Converter {
     const b = new TextBuilder(type);
     if (bold) b.push('BOLD');
     this.inlines(node.children ?? [], b);
+    this.endInlineHtml();
     this.emit(b);
   }
 
@@ -411,6 +440,7 @@ export class Converter {
     if (env.root && this.opts.embedTweets && this.tweet(children)) return;
     const b = new TextBuilder(env.textType);
     this.inlines(children, b);
+    this.endInlineHtml();
     this.emit(b);
   }
 
@@ -431,7 +461,7 @@ export class Converter {
     const lead = first?.type === 'paragraph' ? first.children?.[0] : undefined;
     const m = lead?.type === 'text' ? /^\[!([A-Za-z]+)\][ \t]*(?:\r?\n|$)/.exec(lead.value ?? '') : null;
     const label = m ? ALERTS[m[1].toUpperCase()] : undefined;
-    if (!m || !label || !first) {
+    if (!m || !label || !lead) {
       this.flow(children, QUOTE_ENV);
       return;
     }
@@ -440,7 +470,7 @@ export class Converter {
     b.push('BOLD');
     b.append(label);
     b.pop('BOLD');
-    const rest = [{ ...lead!, value: (lead!.value ?? '').slice(m[0].length) }, ...(first.children ?? []).slice(1)];
+    const rest = [{ ...lead, value: (lead.value ?? '').slice(m[0].length) }, ...(first.children ?? []).slice(1)];
     children.shift();
     if (!rest.some((n) => plainText(n).trim() || n.type !== 'text') && children[0]?.type === 'paragraph') {
       rest.splice(0, rest.length, ...(children.shift()!.children ?? []));
@@ -455,7 +485,7 @@ export class Converter {
   // Lists
 
   private list(node: MdNode, env: Env) {
-    if (env.quote) {
+    if (env.textType === 'blockquote') {
       this.listItems(node, 0, 'quote');
       return;
     }
@@ -503,22 +533,7 @@ export class Converter {
 
       const b = new TextBuilder(type);
       b.prefix = prefix;
-      const continuation: TextBlockType = mode === 'quote' ? 'blockquote' : 'unstyled';
-      for (const child of item.children ?? []) {
-        this.line = child.position?.start.line ?? this.line;
-        if (child.type === 'paragraph') {
-          if (!b.isBlank()) b.hardBreak();
-          this.inlines(child.children ?? [], b);
-        } else if (child.type === 'list') {
-          this.emit(b);
-          this.listItems(child, depth + 1, mode);
-          b.reset(continuation);
-        } else {
-          this.emit(b);
-          this.flow([child], env);
-          b.reset(continuation);
-        }
-      }
+      this.container(item.children ?? [], b, env, (child) => this.listItems(child, depth + 1, mode));
       this.emit(b);
     });
   }
@@ -563,14 +578,12 @@ export class Converter {
     const code = (node.value ?? '').replace(/\s+$/, '');
     const info = (node.lang ?? '').trim();
     if (info.toLowerCase() === 'mermaid') {
-      const fence = codeFence(code);
-      this.blocks.push({ kind: 'image', source: { type: 'mermaid', code }, alt: 'Mermaid 图表', fallbackText: `${fence}mermaid\n${code}\n${fence}` });
+      this.blocks.push({ kind: 'image', source: { type: 'mermaid', code }, alt: 'Mermaid 图表', fallbackText: fenced(code, 'mermaid') });
       return;
     }
     const language = normalizeLanguage(info);
-    const fence = codeFence(code);
-    const wrap = (body: string) => `${fence}${language}\n${body}\n${fence}`;
-    const room = MARKDOWN_BLOCK_LIMIT - wrap('').length;
+    const wrap = (body: string) => fenced(body, language);
+    const room = MARKDOWN_BLOCK_LIMIT - wrap(code).length + code.length;
     if (code.length <= room) {
       this.blocks.push({ kind: 'markdown', role: 'code', markdown: wrap(code), language });
       return;
@@ -602,15 +615,10 @@ export class Converter {
   private latexBlock(raw: string): Block | null {
     const tex = raw.trim();
     if (!tex) return null;
-    try {
-      katex.renderToString(tex, { displayMode: true, throwOnError: true, strict: 'ignore' });
-      return { kind: 'latex', tex };
-    } catch (error) {
-      const reason = error instanceof Error ? error.message.split('\n')[0] : String(error);
-      this.warnings.add('latex-invalid', `公式无法被 KaTeX 渲染，已作为代码输出：${reason}`, this.line);
-      const fence = codeFence(tex);
-      return { kind: 'markdown', role: 'code', markdown: `${fence}latex\n${tex}\n${fence}`, language: 'latex' };
-    }
+    const reason = katexError(tex);
+    if (reason === null) return { kind: 'latex', tex };
+    this.warnings.add('latex-invalid', `公式无法被 KaTeX 渲染，已作为代码输出：${reason}`, this.line);
+    return { kind: 'markdown', role: 'code', markdown: fenced(tex, 'latex'), language: 'latex' };
   }
 
   private latex(raw: string) {
@@ -624,7 +632,11 @@ export class Converter {
     const columns = Math.max(align.length, ...rows.map((r) => r.children?.length ?? 0));
     this.cellHasImage = false;
     const lines = rows.map((row) => {
-      const cells = (row.children ?? []).map((cell) => this.mdInlines(cell.children ?? []).replace(/\s+/g, ' ').trim());
+      const cells = (row.children ?? []).map((cell) => {
+        const md = this.mdInlines(cell.children ?? []);
+        this.endInlineHtml();
+        return md.replace(/\s+/g, ' ').trim();
+      });
       while (cells.length < columns) cells.push('');
       return `| ${cells.join(' | ')} |`;
     });
@@ -665,6 +677,13 @@ export class Converter {
     for (const node of nodes) this.inline(node, b);
   }
 
+  /** Forget unclosed inline HTML (<a>, <sup>) at the end of a block. */
+  private endInlineHtml() {
+    this.linkDepth -= this.htmlLinks.length;
+    this.htmlLinks = [];
+    this.script = null;
+  }
+
   private textValue(value: string): string {
     let text = value.includes(':') ? emojify(value) : value;
     if (this.script) text = toScript(text, this.script) ?? `${this.script === 'sup' ? '^' : '_'}${text}`;
@@ -693,8 +712,7 @@ export class Converter {
         break;
       case 'link':
       case 'linkReference': {
-        const raw = node.type === 'link' ? node.url : this.definitions.get(node.identifier ?? '');
-        const url = this.resolveLink(raw ?? '');
+        const url = this.resolveLink(this.nodeUrl(node));
         const before = b.text.length;
         if (url) b.openLink(url);
         this.linkDepth++;
@@ -706,8 +724,7 @@ export class Converter {
       }
       case 'image':
       case 'imageReference': {
-        const raw = node.type === 'image' ? node.url : this.definitions.get(node.identifier ?? '');
-        this.image(raw ?? '', node.alt ?? '', b);
+        this.image(this.nodeUrl(node), node.alt ?? '', b);
         break;
       }
       case 'footnoteReference':
@@ -772,9 +789,8 @@ export class Converter {
   private htmlBlock(html: string, env: Env) {
     const b = new TextBuilder(env.textType);
     for (const token of tokenizeHtml(html)) this.htmlToken(token, b, true, env.textType);
+    this.endInlineHtml();
     this.emit(b);
-    this.htmlLinks = [];
-    this.script = null;
   }
 
   private htmlToken(token: HtmlToken, b: TextBuilder, block: boolean, blockType: TextBlockType = b.type) {
@@ -785,7 +801,7 @@ export class Converter {
       return;
     }
     if (token.kind === 'comment') {
-      this.warnings.once('html-dropped', '已丢弃无法在 X 中显示的 HTML（注释、样式、脚本、小图标）', this.line);
+      this.warnings.once('html-dropped', DROPPED_MESSAGE, this.line);
       return;
     }
     const name = token.name;
@@ -794,7 +810,7 @@ export class Converter {
     const converted = () => this.warnings.once('html-converted', 'HTML 标签已转为对应格式或纯文本', this.line);
 
     if (RAW_TEXT_TAGS.has(name)) {
-      if (open) this.warnings.once('html-dropped', '已丢弃无法在 X 中显示的 HTML（注释、样式、脚本、小图标）', this.line);
+      if (open) this.warnings.once('html-dropped', DROPPED_MESSAGE, this.line);
       return;
     }
     if (style) {
@@ -811,7 +827,7 @@ export class Converter {
     if (name === 'a' && token.kind === 'open' && token.attrs.href !== undefined) {
       const url = this.resolveLink(token.attrs.href);
       if (url) b.openLink(url);
-      this.htmlLinks.push(Boolean(url));
+      this.htmlLinks.push(url);
       this.linkDepth++;
       converted();
       return;
@@ -825,11 +841,11 @@ export class Converter {
       const width = pixelSize(token.attrs.width);
       const height = pixelSize(token.attrs.height);
       if ((width !== null && width <= 48) || (height !== null && height <= 48)) {
-        this.warnings.once('html-dropped', '已丢弃无法在 X 中显示的 HTML（注释、样式、脚本、小图标）', this.line);
+        this.warnings.once('html-dropped', DROPPED_MESSAGE, this.line);
         return;
       }
       converted();
-      this.image(decodeEntities(token.attrs.src ?? ''), token.attrs.alt ?? '', b);
+      this.image(token.attrs.src ?? '', token.attrs.alt ?? '', b);
       return;
     }
     if (EMBED_TAGS.has(name)) {
@@ -896,8 +912,7 @@ export class Converter {
         return '；';
       case 'link':
       case 'linkReference': {
-        const raw = node.type === 'link' ? node.url : this.definitions.get(node.identifier ?? '');
-        const url = this.resolveLink(raw ?? '');
+        const url = this.resolveLink(this.nodeUrl(node));
         this.linkDepth++;
         const text = this.mdInlines(node.children ?? []);
         this.linkDepth--;
@@ -905,8 +920,7 @@ export class Converter {
       }
       case 'image':
       case 'imageReference': {
-        const raw = node.type === 'image' ? node.url : this.definitions.get(node.identifier ?? '');
-        return this.mdImage(raw ?? '', node.alt ?? '');
+        return this.mdImage(this.nodeUrl(node), node.alt ?? '');
       }
       case 'footnoteReference':
         return `\\[${this.footnoteNumber(node.identifier ?? '')}\\]`;
@@ -947,16 +961,15 @@ export class Converter {
     }
     if (name === 'a' && token.kind === 'open' && token.attrs.href !== undefined) {
       const url = this.resolveLink(token.attrs.href);
-      this.htmlLinks.push(Boolean(url));
-      if (!url) return '';
-      this.cellLinkUrls.push(url);
-      return '[';
+      this.htmlLinks.push(url);
+      return url ? '[' : '';
     }
     if (name === 'a' && !open && this.htmlLinks.length) {
-      return this.htmlLinks.pop() ? `](${mdUrl(this.cellLinkUrls.pop() ?? '')})` : '';
+      const url = this.htmlLinks.pop();
+      return url ? `](${mdUrl(url)})` : '';
     }
-    if (name === 'img' && token.kind === 'open') return this.mdImage(decodeEntities(token.attrs.src ?? ''), token.attrs.alt ?? '');
-    if (STYLE_TAGS[name] || BLOCK_TAGS.has(name) || TRANSPARENT_TAGS.has(name) || RAW_TEXT_TAGS.has(name) || EMBED_TAGS.has(name)) return '';
+    if (name === 'img' && token.kind === 'open') return this.mdImage(token.attrs.src ?? '', token.attrs.alt ?? '');
+    if (BLOCK_TAGS.has(name) || TRANSPARENT_TAGS.has(name) || RAW_TEXT_TAGS.has(name) || EMBED_TAGS.has(name)) return '';
     return escapeMd(decodeEntities(token.raw));
   }
 

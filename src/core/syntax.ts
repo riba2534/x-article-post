@@ -95,11 +95,13 @@ function isCjk(code: Code): boolean {
 }
 
 const PUNCT = /[\p{P}\p{S}]/u;
+const ASCII_PUNCT = /[!-/:-@[-`{-~]/;
 const SPACE = /\s/u;
 
 /** 1 = whitespace, 2 = punctuation, undefined = other (same as micromark's classifyCharacter). */
 function classify(code: Code): 1 | 2 | undefined {
   if (code === null || code < 0 || code === 32) return 1;
+  if (code < 128) return code < 33 || code === 127 ? 1 : ASCII_PUNCT.test(String.fromCharCode(code)) ? 2 : undefined;
   const ch = String.fromCharCode(code);
   if (SPACE.test(ch)) return 1;
   if (PUNCT.test(ch)) return 2;
@@ -116,6 +118,7 @@ function tokenizeAttention(this: any, effects: Effects, ok: State): State {
       return inside;
     }
     const token = effects.exit('attentionSequence');
+    token._marker = marker;
     let before = classify(previous);
     let after = classify(code);
     if (marker === ASTERISK) {
@@ -172,7 +175,7 @@ function resolveAllAttention(events: Event[], context: any): Event[] {
         events[open][0] !== 'exit' ||
         opener.type !== 'attentionSequence' ||
         !opener._open ||
-        context.sliceSerialize(opener).charCodeAt(0) !== context.sliceSerialize(closer).charCodeAt(0)
+        opener._marker !== closer._marker
       ) {
         continue;
       }
@@ -194,7 +197,7 @@ function resolveAllAttention(events: Event[], context: any): Event[] {
       const next: Event[] = [];
       if (len(opener)) next.push(['enter', opener, context], ['exit', opener, context]);
       next.push(['enter', group, context], ['enter', openingSequence, context], ['exit', openingSequence, context], ['enter', text, context]);
-      next.push(...resolveInsideSpan(context.parser.constructs.insideSpan.null, events.slice(open + 1, index), context));
+      for (const event of resolveInsideSpan(context.parser.constructs.insideSpan.null, events.slice(open + 1, index), context)) next.push(event);
       next.push(['exit', text, context], ['enter', closingSequence, context], ['exit', closingSequence, context], ['exit', group, context]);
       let offset = 0;
       if (len(closer)) {

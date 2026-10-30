@@ -70,9 +70,9 @@ const KNOWN = new Set([
   'diff', 'nginx', 'protobuf', 'lua', 'php', 'ruby', 'css', 'scss', 'less', 'powershell', 'dos', 'objectivec',
   'latex', 'vim', 'csharp', 'fsharp', 'haskell', 'elixir', 'erlang', 'perl', 'graphql', 'hcl', 'scala',
   'r', 'dart', 'groovy', 'gradle', 'apache', 'awk', 'clojure', 'julia', 'matlab', 'nix', 'ocaml', 'prolog',
-  'scheme', 'lisp', 'thrift', 'x86asm', 'armasm', 'wasm', 'zig', 'verilog', 'vhdl', 'properties', 'plaintext',
+  'scheme', 'lisp', 'thrift', 'x86asm', 'armasm', 'wasm', 'zig', 'verilog', 'vhdl', 'properties',
   'csp', 'django', 'handlebars', 'twig', 'basic', 'fortran', 'pascal', 'delphi', 'coffeescript', 'crystal',
-  'elm', 'nim', 'reasonml', 'sas', 'stata', 'tcl', 'vbnet', 'vbscript', 'xquery', 'yaml', 'pf', 'routeros',
+  'elm', 'nim', 'reasonml', 'sas', 'stata', 'tcl', 'vbnet', 'vbscript', 'xquery', 'pf', 'routeros',
 ]);
 
 export function normalizeLanguage(lang: string): string {

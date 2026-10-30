@@ -439,6 +439,12 @@ describe('raw HTML', () => {
     expect(text('<service>\nname\n</service>').text).toBe('<service> name </service>');
   });
 
+  it('does not carry unclosed inline HTML into the next block', () => {
+    const doc = convert('a <a href="https://a.test">x\n\nnext\n\nH<sup>2\n\nplain 3');
+    expect(shape(doc.blocks)).toEqual(['unstyled:a x', 'unstyled:next', 'unstyled:H²', 'unstyled:plain 3']);
+    expect(doc.blocks[1]).toMatchObject({ links: [] });
+  });
+
   it('converts inline <sup>/<sub> to Unicode', () => {
     expect(text('x<sup>2</sup> H<sub>2</sub>O e<sup>iπ</sup>').text).toBe('x² H₂O e^iπ');
   });

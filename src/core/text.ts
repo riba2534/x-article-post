@@ -1,7 +1,7 @@
 import type { InlineStyle, LinkRange, StyleRange, TextBlock, TextBlockType } from '../shared/types';
 
 /** Marks a hard line break while building; soft breaks stay '\n' until finish(). */
-export const HARD_BREAK = '\u2028';
+const HARD_BREAK = '\u2028';
 
 const STYLES: InlineStyle[] = ['BOLD', 'ITALIC', 'STRIKETHROUGH'];
 
@@ -25,7 +25,7 @@ export class TextBuilder {
   private ranges: StyleRange[] = [];
   private links: LinkRange[] = [];
   private openLinks: { offset: number; url: string }[] = [];
-  readonly active: Record<InlineStyle, number> = { BOLD: 0, ITALIC: 0, STRIKETHROUGH: 0 };
+  private readonly active: Record<InlineStyle, number> = { BOLD: 0, ITALIC: 0, STRIKETHROUGH: 0 };
   /** Written before the first finished segment only (list markers, footnote numbers). */
   prefix = '';
 
@@ -107,7 +107,7 @@ export class TextBuilder {
     map[src.length] = out.length;
 
     // Trim whitespace at both ends.
-    const lead = out.length - out.replace(/^\s+/, '').length;
+    const lead = /^\s*/.exec(out)![0].length;
     const body = out.trim();
     if (!body) return null;
     const clamp = (n: number) => Math.min(Math.max(n - lead, 0), body.length);
@@ -142,7 +142,7 @@ function mergeRanges(ranges: StyleRange[]): StyleRange[] {
 }
 
 /** Prefix a finished block's text, shifting its ranges. */
-export function prefixBlock(block: TextBlock, prefix: string): TextBlock {
+function prefixBlock(block: TextBlock, prefix: string): TextBlock {
   if (!prefix) return block;
   const shift = <T extends { offset: number }>(r: T): T => ({ ...r, offset: r.offset + prefix.length });
   return { ...block, text: prefix + block.text, styles: block.styles.map(shift), links: block.links.map(shift) };

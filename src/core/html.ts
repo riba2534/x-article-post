@@ -10,11 +10,12 @@ const TAG = /<!--[\s\S]*?(?:-->|$)|<\/([A-Za-z][A-Za-z0-9-]*)\s*>|<([A-Za-z][A-Z
 const ATTR = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 
 /** Elements whose content is not rendered text. */
-const RAW_TEXT = new Set(['style', 'script', 'textarea', 'title', 'template', 'noscript']);
+export const RAW_TEXT_TAGS = new Set(['style', 'script', 'textarea', 'title', 'template', 'noscript']);
 
 export function tokenizeHtml(html: string): HtmlToken[] {
   const tokens: HtmlToken[] = [];
   let last = 0;
+  let lower: string | undefined;
   TAG.lastIndex = 0;
   for (let m = TAG.exec(html); m; m = TAG.exec(html)) {
     if (m.index > last) tokens.push({ kind: 'text', value: html.slice(last, m.index) });
@@ -31,9 +32,10 @@ export function tokenizeHtml(html: string): HtmlToken[] {
         attrs[a[1].toLowerCase()] = decodeEntities(a[2] ?? a[3] ?? a[4] ?? '');
       }
       tokens.push({ kind: 'open', name, attrs, selfClosing: m[4] === '/', raw: m[0] });
-      if (RAW_TEXT.has(name)) {
+      if (RAW_TEXT_TAGS.has(name)) {
         // Swallow everything up to the matching close tag.
-        const close = html.toLowerCase().indexOf(`</${name}`, last);
+        lower ??= html.toLowerCase();
+        const close = lower.indexOf(`</${name}`, last);
         const end = close < 0 ? html.length : html.indexOf('>', close) + 1 || html.length;
         tokens.push({ kind: 'close', name, raw: html.slice(close < 0 ? end : close, end) });
         last = end;

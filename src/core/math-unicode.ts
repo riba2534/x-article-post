@@ -47,6 +47,8 @@ const DROP = new Set(['left', 'right', 'big', 'Big', 'bigg', 'Bigg', 'bigl', 'bi
 
 class Fail extends Error {}
 
+const COMMAND = /[A-Za-z]+/y;
+
 export function texToUnicode(tex: string): string | null {
   const src = tex.replace(/[\u200b\u200c\u200d\ufeff]/g, '').trim();
   if (!src) return null;
@@ -55,7 +57,8 @@ export function texToUnicode(tex: string): string | null {
   const readCommand = (): string => {
     // At a backslash.
     pos++;
-    const m = /^[A-Za-z]+/.exec(src.slice(pos));
+    COMMAND.lastIndex = pos;
+    const m = COMMAND.exec(src);
     if (m) {
       pos += m[0].length;
       return m[0];
