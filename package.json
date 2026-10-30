@@ -24,6 +24,7 @@
     "@types/chrome": "0.3.7",
     "@types/node": "24.19.2",
     "draft-js": "0.11.7",
+    "fake-indexeddb": "6.2.7",
     "happy-dom": "21.0.4",
     "immutable": "3.8.4",
     "react": "18.3.1",

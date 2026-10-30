@@ -1,5 +1,6 @@
 // Prepare pipeline: Markdown -> ArticleDoc -> images fetched/rendered/normalized -> WriteRequest.
 // Runs in the side panel and in the offscreen document; only needs a DOM, not the panel UI.
+import { stashImages } from '../shared/image-store';
 import { convertMarkdown } from '../core/index';
 import type {
   ArticleDoc,
@@ -141,7 +142,7 @@ export async function assembleRequest(
     return fallbackBlock(block.fallbackText || block.alt || '[图片]');
   });
 
-  const request: WriteRequest = { runId, title: opts.title ?? doc.title, blocks, images, target };
+  const request: WriteRequest = { runId, title: opts.title ?? doc.title, blocks, images: await stashImages(runId, images), target };
   const coverImageId = ids.get('cover');
   if (coverImageId) request.coverImageId = coverImageId;
   report('内容已就绪', total || undefined);
