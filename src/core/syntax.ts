@@ -1,5 +1,5 @@
 // micromark/mdast extensions that align remark with the blog's Hugo goldmark setup:
-// - `\( \)` inline and `\[ \]` display math (goldmark passthrough), which CommonMark would eat as escapes;
+// - `\( \)` inline and `\[ \]` / `$$ $$` display math (goldmark passthrough; CommonMark would eat `\(` as an escape);
 // - CJK-friendly `*` emphasis flanking (bold right next to full-width punctuation and CJK letters).
 // Types are kept local and loose on purpose: micromark's typings are transitive dependencies.
 
@@ -16,51 +16,88 @@ type Event = [string, any, any];
 const BACKSLASH = 92;
 const ASTERISK = 42;
 const UNDERSCORE = 95;
+const DOLLAR = 36;
 
-// ---------------------------------------------------------------------------
-// TeX passthrough: `\(...\)` and `\[...\]`.
-
-function tokenizeTexMath(this: any, effects: Effects, ok: State, nok: State): State {
-  let close = 0;
-  let size = 0;
-  const start: State = (code) => {
-    effects.enter('texMath');
-    effects.consume(code);
-    return open;
-  };
-  const open: State = (code) => {
-    if (code !== 40 && code !== 91) return nok(code);
-    close = code === 40 ? 41 : 93;
-    effects.consume(code);
-    return inside;
-  };
-  const inside: State = (code) => {
-    if (code === null) return nok(code);
-    effects.consume(code);
-    if (code === BACKSLASH) return escaped;
-    size++;
-    return inside;
-  };
-  const escaped: State = (code) => {
-    if (code === null) return nok(code);
-    if (code === close) {
-      if (size === 0) return nok(code);
-      effects.consume(code);
-      effects.exit('texMath');
-      return ok;
-    }
-    size++;
-    // `\\` is a TeX command; consume the pair so `\\)` is not read as a closer.
-    if (code === BACKSLASH) {
-      effects.consume(code);
-      return inside;
-    }
-    return inside(code);
-  };
-  return start;
+/** micromark line ending codes (CR, LF, CRLF) are negative. */
+function isLineEnding(code: Code): boolean {
+  return code !== null && code < -2;
 }
 
-const texMathConstruct = { name: 'texMath', tokenize: tokenizeTexMath };
+// ---------------------------------------------------------------------------
+// Math passthrough: `\(...\)` inline, `\[...\]` and `$$...$$` display. Parsed at text level like a code
+// span, so the content may share lines with the delimiters and span lines within one paragraph.
+
+function createMathTokenizer(kind: 'tex' | 'dollar') {
+  return function tokenizeMath(this: any, effects: Effects, ok: State, nok: State): State {
+    let close = 0;
+    let size = 0;
+    let inData = false;
+
+    // Content goes into data tokens; line endings get their own token (micromark requires it).
+    const take = (code: Code) => {
+      if (isLineEnding(code)) {
+        if (inData) effects.exit('texMathData');
+        inData = false;
+        effects.enter('lineEnding');
+        effects.consume(code);
+        effects.exit('lineEnding');
+        return;
+      }
+      if (!inData) effects.enter('texMathData');
+      inData = true;
+      effects.consume(code);
+    };
+    const finish = (code: Code) => {
+      take(code);
+      effects.exit('texMathData');
+      effects.exit('texMath');
+      return ok;
+    };
+
+    const start: State = (code) => {
+      effects.enter('texMath');
+      effects.consume(code);
+      return open;
+    };
+    const open: State = (code) => {
+      if (kind === 'dollar') {
+        if (code !== DOLLAR) return nok(code);
+      } else if (code === 40 || code === 91) {
+        close = code === 40 ? 41 : 93;
+      } else {
+        return nok(code);
+      }
+      effects.consume(code);
+      return inside;
+    };
+    const inside: State = (code) => {
+      if (code === null) return nok(code);
+      take(code);
+      if (code === BACKSLASH) return escaped;
+      if (code === DOLLAR && kind === 'dollar') return closing;
+      size++;
+      return inside;
+    };
+    // After a backslash: `\)`/`\]` closes TeX math; any other escaped char (`\\`, `\$`) is content.
+    const escaped: State = (code) => {
+      if (code === null) return nok(code);
+      if (kind === 'tex' && code === close && size > 0) return finish(code);
+      if (isLineEnding(code)) return inside(code);
+      take(code);
+      size++;
+      return inside;
+    };
+    const closing: State = (code) => {
+      if (code === DOLLAR && size > 0) return finish(code);
+      size++;
+      return inside(code);
+    };
+    return start;
+  };
+}
+
+const texMathConstruct = { name: 'texMath', tokenize: createMathTokenizer('tex') };
+const dollarMathConstruct = { name: 'dollarMath', tokenize: createMathTokenizer('dollar') };
 
 const texMathFromMarkdown = {
   enter: {
@@ -72,7 +109,7 @@ const texMathFromMarkdown = {
     texMath(this: any, token: any) {
       const raw: string = this.sliceSerialize(token);
       const node = this.stack[this.stack.length - 1];
-      node.display = raw[1] === '[';
+      node.display = raw[1] !== '(';
       node.value = raw.slice(2, -2);
       this.exit(token);
     },
@@ -220,6 +257,7 @@ const attentionConstruct = { name: 'attention', tokenize: tokenizeAttention, res
 const syntax = {
   text: {
     [BACKSLASH]: texMathConstruct,
+    [DOLLAR]: dollarMathConstruct,
     [ASTERISK]: attentionConstruct,
     [UNDERSCORE]: attentionConstruct,
   },

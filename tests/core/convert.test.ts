@@ -299,6 +299,39 @@ describe('math', () => {
     ]);
   });
 
+  it('keeps $$ content on the delimiter lines (multi-line, single-line, own lines)', () => {
+    const md = '前文\n\n$$dp[i][j]=\\left\\{\\begin{matrix}\na\\\\ \nb\n\\end{matrix}\\right.$$\n\n后文\n\n$$\nx^2\n$$\n\n$$E=mc^2$$\n';
+    const doc = convert(md);
+    expect(doc.blocks).toEqual([
+      { kind: 'text', type: 'unstyled', text: '前文', styles: [], links: [] },
+      { kind: 'latex', tex: 'dp[i][j]=\\left\\{\\begin{matrix}\na\\\\ \nb\n\\end{matrix}\\right.' },
+      { kind: 'text', type: 'unstyled', text: '后文', styles: [], links: [] },
+      { kind: 'latex', tex: 'x^2' },
+      { kind: 'latex', tex: 'E=mc^2' },
+    ]);
+    expect(doc.warnings).toEqual([]);
+  });
+
+  it('keeps \\[ \\] content on the delimiter lines', () => {
+    expect(blocks('\\[a\\\\\nb\\]\n\n后文')).toEqual([
+      { kind: 'latex', tex: 'a\\\\\nb' },
+      { kind: 'text', type: 'unstyled', text: '后文', styles: [], links: [] },
+    ]);
+  });
+
+  it('treats \\$ inside $$ as content and leaves unclosed $$ as text', () => {
+    expect(blocks('$$\\$5 + x$$')).toEqual([{ kind: 'latex', tex: '\\$5 + x' }]);
+    expect(text('price $$ only').text).toBe('price $$ only');
+    expect(text('a $$$$ b').text).toBe('a $$$$ b');
+  });
+
+  it('ignores $$ in code', () => {
+    expect(blocks('`$$x$$` and\n\n```\n$$\ny\n$$\n```')).toEqual([
+      { kind: 'text', type: 'unstyled', text: '`$$x$$` and', styles: [], links: [] },
+      { kind: 'markdown', role: 'code', markdown: '```\n$$\ny\n$$\n```', language: '' },
+    ]);
+  });
+
   it('splits a paragraph around display math', () => {
     expect(shape(blocks('易得：\n$$s=k$$\n移项得：'))).toEqual(['unstyled:易得：', 'latex', 'unstyled:移项得：']);
   });

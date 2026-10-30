@@ -45,6 +45,21 @@ function outputText(doc: ArticleDoc): string {
   return parts.join('\n');
 }
 
+/** $$ formulas in the source outside fenced code and code spans. */
+function dollarFormulas(md: string): string[] {
+  const prose = md.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '').replace(/(`+)[^`]*?\1/g, '');
+  return [...prose.matchAll(/\$\$([\s\S]+?)\$\$/g)].map((m) => m[1].trim());
+}
+
+/** TeX of LaTeX blocks and of formulas that KaTeX rejected (written as latex code). */
+function outputFormulas(doc: ArticleDoc): string[] {
+  return doc.blocks.flatMap((b) => {
+    if (b.kind === 'latex') return [b.tex];
+    if (b.kind === 'markdown' && b.language === 'latex') return [b.markdown.replace(/^`+latex\n|\n`+$/g, '')];
+    return [];
+  });
+}
+
 const RESIDUE: [string, RegExp][] = [
   // `char **argv` is a literal pointer declaration, not an emphasis delimiter.
   ['bold marker', /\*\*(?<![A-Za-z] \*\*(?=[A-Za-z]))/],
@@ -65,6 +80,9 @@ describe.skipIf(!BLOG_DIR)('blog corpus', () => {
     const files = listMarkdown(BLOG_DIR!);
     expect(files.length).toBeGreaterThan(0);
     const residues: string[] = [];
+    const lostFormulas: string[] = [];
+    let formulas = 0;
+    let invalid = 0;
     const retention: { file: string; ratio: number; missing: number }[] = [];
 
     for (const file of files) {
@@ -83,6 +101,13 @@ describe.skipIf(!BLOG_DIR)('blog corpus', () => {
         }
       }
 
+      const tex = outputFormulas(doc);
+      invalid += doc.warnings.filter((w) => w.code === 'latex-invalid').length;
+      for (const formula of dollarFormulas(md)) {
+        formulas++;
+        if (!tex.includes(formula)) lostFormulas.push(`${rel}: ${JSON.stringify(formula.slice(0, 80))}`);
+      }
+
       const src = countCjk(sourceText(md));
       const out = countCjk(outputText(doc));
       let total = 0;
@@ -99,7 +124,9 @@ describe.skipIf(!BLOG_DIR)('blog corpus', () => {
       `corpus: ${files.length} files; worst CJK retention:\n` +
         retention.slice(0, 5).map((r) => `  ${(r.ratio * 100).toFixed(2)}% (-${r.missing}) ${r.file}`).join('\n'),
     );
+    console.log(`corpus: ${formulas} $$ formulas, ${invalid} latex-invalid`);
     expect(residues).toEqual([]);
+    expect(lostFormulas).toEqual([]);
     expect(retention.filter((r) => r.ratio < 0.98)).toEqual([]);
   });
 });

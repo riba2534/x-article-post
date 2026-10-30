@@ -82,7 +82,7 @@ class Warnings {
 }
 
 function plainText(node: MdNode): string {
-  if (node.type === 'texMath' || node.type === 'inlineMath') return node.value ?? '';
+  if (node.type === 'texMath') return node.value ?? '';
   if (node.value !== undefined && !node.children) return node.type === 'html' ? '' : node.value;
   if (node.type === 'image' || node.type === 'imageReference') return node.alt ?? '';
   return (node.children ?? []).map(plainText).join('');
@@ -374,9 +374,6 @@ class Converter {
         case 'code':
           this.code(node);
           break;
-        case 'math':
-          this.latex(node.value ?? '');
-          break;
         case 'html':
           this.htmlBlock(node.value ?? '', env);
           break;
@@ -621,11 +618,6 @@ class Converter {
     return { kind: 'markdown', role: 'code', markdown: fenced(tex, 'latex'), language: 'latex' };
   }
 
-  private latex(raw: string) {
-    const block = this.latexBlock(raw);
-    if (block) this.blocks.push(block);
-  }
-
   private table(node: MdNode) {
     const rows = node.children ?? [];
     const align = node.align ?? [];
@@ -732,9 +724,6 @@ class Converter {
         break;
       case 'html':
         for (const token of tokenizeHtml(node.value ?? '')) this.htmlToken(token, b, false);
-        break;
-      case 'inlineMath':
-        this.displayMath(node.value ?? '', b);
         break;
       case 'texMath':
         if (node.display) this.displayMath(node.value ?? '', b);
@@ -926,8 +915,6 @@ class Converter {
         return `\\[${this.footnoteNumber(node.identifier ?? '')}\\]`;
       case 'html':
         return tokenizeHtml(node.value ?? '').map((t) => this.mdHtmlToken(t)).join('');
-      case 'inlineMath':
-        return `$$${node.value ?? ''}$$`;
       case 'texMath': {
         const tex = node.value ?? '';
         if (node.display) return `$$${tex}$$`;
