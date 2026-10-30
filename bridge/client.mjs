@@ -2,13 +2,9 @@
 // minutes and undici's default headers timeout (5 min) would cut them off.
 import http from 'node:http';
 
-export class ApiError extends Error {
-  constructor(status, code, message) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-}
+import { BridgeError as ApiError } from './server.mjs';
+
+export { ApiError };
 
 export function callApi({ port, token, method, path, body, timeoutMs = 11 * 60 * 1000 }) {
   const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));

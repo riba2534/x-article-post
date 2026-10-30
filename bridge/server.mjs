@@ -15,7 +15,7 @@ const PING_INTERVAL_MS = 20 * 1000;
 const HELLO_TIMEOUT_MS = 5 * 1000;
 
 /** Error codes the extension may return, mapped to HTTP statuses. */
-const CODE_STATUS = { 'bad-request': 400, unauthorized: 401, busy: 409, 'not-connected': 503, timeout: 504 };
+const CODE_STATUS = { 'bad-request': 400, busy: 409 };
 
 export class BridgeError extends Error {
   constructor(status, code, message) {
@@ -46,7 +46,6 @@ export function createBridgeServer(opts) {
 
   /** @type {import('ws').WebSocket | null} */
   let ext = null;
-  let extVersion = '';
   let draftInFlight = false;
   /** @type {Map<string, { resolve: (v: unknown) => void, reject: (e: Error) => void, timer: NodeJS.Timeout }>} */
   const pending = new Map();
@@ -124,8 +123,7 @@ export function createBridgeServer(opts) {
         authed = true;
         if (ext && ext !== socket) ext.close(4000, 'replaced by a newer connection');
         ext = socket;
-        extVersion = String(msg.version ?? '');
-        log(`extension connected (v${extVersion})`);
+        log(`extension connected (v${String(msg.version ?? '')})`);
         socket.send(JSON.stringify({ type: 'welcome', protocol: PROTOCOL_VERSION, version }));
         pingTimer = setInterval(() => {
           if (Date.now() - lastSeen > t.ping * 3) return socket.terminate();
@@ -186,9 +184,15 @@ export function createBridgeServer(opts) {
     });
   }
 
+  const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
+
   function requireObject(body) {
-    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new BridgeError(400, 'bad-request', 'Body must be a JSON object');
+    if (!isObject(body)) throw new BridgeError(400, 'bad-request', 'Body must be a JSON object');
     return body;
+  }
+
+  function checkOptions(options) {
+    if (options !== undefined && !isObject(options)) throw new BridgeError(400, 'bad-request', '"options" must be an object');
   }
 
   function validateDraft(body) {
@@ -199,8 +203,7 @@ export function createBridgeServer(opts) {
       throw new BridgeError(400, 'bad-request', '"articleId" must be a numeric string');
     if (mode !== undefined && mode !== 'append' && mode !== 'replace') throw new BridgeError(400, 'bad-request', '"mode" must be "append" or "replace"');
     if (mode !== undefined && articleId === undefined) throw new BridgeError(400, 'bad-request', '"mode" requires "articleId"');
-    if (options !== undefined && (typeof options !== 'object' || options === null || Array.isArray(options)))
-      throw new BridgeError(400, 'bad-request', '"options" must be an object');
+    checkOptions(options);
     return { markdown, title, articleId, mode: articleId ? (mode ?? 'append') : undefined, options };
   }
 
@@ -213,13 +216,13 @@ export function createBridgeServer(opts) {
     'POST /v1/convert': async (req) => {
       const { markdown, options } = requireObject(await readJson(req));
       if (typeof markdown !== 'string') throw new BridgeError(400, 'bad-request', '"markdown" must be a string');
-      if (options !== undefined && (typeof options !== 'object' || options === null)) throw new BridgeError(400, 'bad-request', '"options" must be an object');
+      checkOptions(options);
       const convert = await loadConvert();
       return convert(markdown, options ?? {});
     },
     'POST /v1/drafts': async (req) => {
       const params = validateDraft(await readJson(req));
-      if (!ext) throw new BridgeError(503, 'not-connected', 'Extension is not connected to the bridge');
+      // Also guards the prepare phase, before the writer reports busy.
       if (draftInFlight) throw new BridgeError(409, 'busy', 'Another draft is being written');
       draftInFlight = true;
       try {

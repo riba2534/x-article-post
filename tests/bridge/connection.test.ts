@@ -39,9 +39,8 @@ const on = { enabled: true, url: URL, token: 'tok' };
 
 function setup() {
   const onCommand = vi.fn();
-  const onStateChange = vi.fn();
-  const conn = createBridgeConnection({ version: '1.0.0', createSocket: (url) => new FakeSocket(url), onCommand, onStateChange });
-  return { conn, onCommand, onStateChange, latest: () => FakeSocket.all.at(-1)! };
+  const conn = createBridgeConnection({ version: '1.0.0', createSocket: (url) => new FakeSocket(url), onCommand });
+  return { conn, onCommand, latest: () => FakeSocket.all.at(-1)! };
 }
 
 beforeEach(() => {
@@ -60,14 +59,13 @@ describe('bridge connection', () => {
   });
 
   it('sends hello on open and becomes connected after welcome', () => {
-    const { conn, latest, onStateChange } = setup();
+    const { conn, latest } = setup();
     conn.configure(on);
     latest().open();
     expect(latest().sent[0]).toEqual({ type: 'hello', token: 'tok', protocol: BRIDGE_PROTOCOL_VERSION, version: '1.0.0' });
     expect(conn.status().connected).toBe(false);
     latest().receive({ type: 'welcome', protocol: 1 });
     expect(conn.status()).toEqual({ enabled: true, connected: true, url: URL });
-    expect(onStateChange).toHaveBeenLastCalledWith({ enabled: true, connected: true, url: URL });
   });
 
   it('answers ping with pong and dispatches commands', () => {

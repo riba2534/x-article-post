@@ -107,7 +107,7 @@ describe('bridge command handler', () => {
   });
 
   it('validates draft params', async () => {
-    for (const params of [{}, { markdown: ' ' }, { markdown: 'x', articleId: 'abc' }, { markdown: 'x', mode: 'publish' }, { markdown: 'x', options: [] }]) {
+    for (const params of [{}, { markdown: ' ' }, { markdown: 'x', articleId: 'abc' }, { markdown: 'x', mode: 'publish' }, { markdown: 'x', mode: 'append' }, { markdown: 'x', options: [] }]) {
       const { run, sent } = setup();
       await run('draft', params);
       expect(lastResponse(sent)).toMatchObject({ ok: false, error: { code: 'bad-request' } });

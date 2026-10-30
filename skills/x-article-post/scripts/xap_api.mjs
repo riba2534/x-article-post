@@ -58,7 +58,7 @@ function call(method, pathname, body) {
       res.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8');
         if ((res.statusCode ?? 500) >= 400) fail(`HTTP ${res.statusCode} ${text}`);
-        console.log(JSON.stringify(JSON.parse(text), null, 2));
+        console.log(text);
       });
     },
   );

@@ -29,7 +29,6 @@ export async function ensureToken(file = tokenPath()) {
   const token = randomBytes(32).toString('base64url');
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   await writeFile(file, token + '\n', { mode: 0o600 });
-  await chmod(file, 0o600);
   return { token, created: true };
 }
 

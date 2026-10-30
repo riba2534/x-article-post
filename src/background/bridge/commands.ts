@@ -47,6 +47,7 @@ function parseDraft(params: Record<string, unknown>): DraftParams {
   if (title !== undefined && typeof title !== 'string') throw new CommandError('bad-request', 'title must be a string');
   if (articleId !== undefined && (typeof articleId !== 'string' || !/^\d+$/.test(articleId))) throw new CommandError('bad-request', 'articleId must be a numeric string');
   if (mode !== undefined && mode !== 'append' && mode !== 'replace') throw new CommandError('bad-request', 'mode must be append or replace');
+  if (mode !== undefined && articleId === undefined) throw new CommandError('bad-request', 'mode requires articleId');
   if (options !== undefined && !isObject(options)) throw new CommandError('bad-request', 'options must be an object');
   return { markdown, title, articleId, mode, options: options as Partial<ConvertOptions> | undefined };
 }

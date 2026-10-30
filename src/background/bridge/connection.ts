@@ -17,7 +17,6 @@ export interface ConnectionDeps {
   version: string;
   createSocket(url: string): SocketLike;
   onCommand(cmd: BridgeCommand, send: (msg: BridgeMessage) => void): void;
-  onStateChange?(state: ExtensionStatus['bridge']): void;
   log?(message: string): void;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (handle: unknown) => void;
@@ -42,12 +41,6 @@ export function createBridgeConnection(deps: ConnectionDeps) {
 
   const state = (): ExtensionStatus['bridge'] => ({ enabled: settings.enabled, connected, url: settings.url });
 
-  function setConnected(value: boolean) {
-    if (connected === value) return;
-    connected = value;
-    deps.onStateChange?.(state());
-  }
-
   function cancelRetry() {
     if (retryTimer !== null) clearTimer(retryTimer);
     retryTimer = null;
@@ -61,7 +54,7 @@ export function createBridgeConnection(deps: ConnectionDeps) {
       s.onopen = s.onmessage = s.onclose = s.onerror = null;
       s.close(1000, 'bridge disabled');
     }
-    setConnected(false);
+    connected = false;
   }
 
   function scheduleRetry() {
@@ -100,7 +93,7 @@ export function createBridgeConnection(deps: ConnectionDeps) {
       if (msg.type === 'ping') return s.send(JSON.stringify({ type: 'pong' }));
       if (msg.type === 'welcome') {
         backoff = BACKOFF_MIN_MS;
-        setConnected(true);
+        connected = true;
         return;
       }
       if (typeof msg.id === 'string' && typeof msg.method === 'string') deps.onCommand(msg as BridgeCommand, send);
@@ -109,7 +102,7 @@ export function createBridgeConnection(deps: ConnectionDeps) {
     s.onclose = (ev) => {
       if (socket !== s) return;
       socket = null;
-      setConnected(false);
+      connected = false;
       if (FATAL_CLOSE_CODES.has(ev.code)) {
         log(`bridge: rejected (${ev.code} ${ev.reason}); check the token in settings`);
         backoff = BACKOFF_MAX_MS;
@@ -126,7 +119,6 @@ export function createBridgeConnection(deps: ConnectionDeps) {
       if (!changed) return;
       drop();
       backoff = BACKOFF_MIN_MS;
-      deps.onStateChange?.(state());
       connect();
     },
     /** Periodic check (alarm): reconnect right away if enabled and idle. */
@@ -134,6 +126,5 @@ export function createBridgeConnection(deps: ConnectionDeps) {
       if (settings.enabled && !socket) connect();
     },
     status: state,
-    disconnect: drop,
   };
 }

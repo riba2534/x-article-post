@@ -47,10 +47,7 @@ export function initBridge(overrides: Partial<BridgeInitDeps> = {}): void {
   // Wakes the service worker after it was suspended and restores the connection.
   void chrome.alarms.create(ALARM, { periodInMinutes: 1 });
   chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name !== ALARM) return;
-    void loadSettings().then((settings) => {
-      apply(settings);
-      connection.ensure();
-    });
+    // Settings are kept current by storage.onChanged; only revive an idle connection.
+    if (alarm.name === ALARM) connection.ensure();
   });
 }
