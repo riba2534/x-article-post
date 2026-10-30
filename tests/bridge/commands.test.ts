@@ -17,7 +17,6 @@ function setup(overrides: Partial<CommandDeps> = {}) {
     bridgeStatus: () => ({ enabled: true, connected: true, url: 'ws://127.0.0.1:17345/ext' }),
     isBusy: () => false,
     getXTabStatus: async () => ({ tabId: 3, url: 'https://x.com/compose/articles/edit/7', articleId: '7', editorReady: true }),
-    convert: vi.fn(() => doc),
     ensureOffscreen: vi.fn(async () => {}),
     prepare: vi.fn(async () => ({ ok: true as const, request, doc })),
     runWrite: vi.fn(async (_req, onProgress) => {
@@ -43,13 +42,6 @@ describe('bridge command handler', () => {
       ok: true,
       result: { version: '1.0.0', bridge: { enabled: true, connected: true, url: 'ws://127.0.0.1:17345/ext' }, xTab: expect.objectContaining({ articleId: '7' }), busy: false },
     });
-  });
-
-  it('converts with core directly', async () => {
-    const { run, sent, deps } = setup();
-    await run('convert', { markdown: '# a', options: { embedTweets: false } });
-    expect(deps.convert).toHaveBeenCalledWith('# a', { embedTweets: false });
-    expect(lastResponse(sent)).toMatchObject({ ok: true, result: doc });
   });
 
   it('runs a draft through offscreen prepare and the writer, forwarding progress', async () => {
@@ -129,9 +121,11 @@ describe('bridge command handler', () => {
     expect(lastResponse(none.sent)).toMatchObject({ ok: true, result: { editorReady: false } });
   });
 
-  it('rejects unknown methods', async () => {
-    const { run, sent } = setup();
-    await run('publish');
-    expect(lastResponse(sent)).toMatchObject({ ok: false, error: { code: 'bad-request' } });
+  it('rejects unknown methods, including convert (the bridge converts in Node)', async () => {
+    for (const method of ['publish', 'convert']) {
+      const { run, sent } = setup();
+      await run(method, { markdown: 'x' });
+      expect(lastResponse(sent)).toMatchObject({ ok: false, error: { code: 'bad-request' } });
+    }
   });
 });
