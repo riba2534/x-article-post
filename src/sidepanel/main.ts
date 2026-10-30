@@ -8,7 +8,7 @@ import type { ArticleDoc, ExtensionStatus, RuntimeMessage, WriteResult, WriteTar
 import { segmented } from './controls';
 import { h, icon } from './dom';
 import { createEditor } from './editor';
-import { buildTarget, countWords, groupWarnings, type TargetMode } from './model';
+import { buildTarget, countWords, degradeLabels, groupWarnings, type TargetMode } from './model';
 import { openRunView, type RunView } from './run';
 import { openSettings } from './settings-panel';
 import { openSheet } from './sheet';
@@ -57,7 +57,7 @@ const settingsBtn = h('button', { type: 'button', class: 'icon-btn', 'aria-label
 const header = h(
   'header',
   { class: 'topbar' },
-  h('div', { class: 'brand' }, h('span', { class: 'brand-mark', 'aria-hidden': 'true' }, '𝕏'), h('span', { class: 'brand-name' }, 'Article Post')),
+  h('div', { class: 'brand' }, icon('doc', 20), h('span', { class: 'brand-name' }, 'X Article Post')),
   h('div', { class: 'capsules' }, xCapsule, agentCapsule),
   settingsBtn,
 );
@@ -77,7 +77,7 @@ const editorHost = h('div', { class: 'editor-host' });
 const dropHint = h('div', { class: 'drop-hint', 'aria-hidden': 'true' }, icon('upload', 28), h('span', null, '松开以打开文件'));
 const editorCard = h(
   'div',
-  { class: 'card editor-card' },
+  { class: 'editor-card' },
   h(
     'div',
     { class: 'editor-toolbar' },
@@ -110,16 +110,25 @@ const targetSeg = segmented<TargetMode>(
   },
   'seg-target',
 );
-const footerMeta = h('div', { class: 'footer-meta' });
-const primaryBtn = h('button', { type: 'button', class: 'btn btn-primary', onclick: () => onPrimary() }, '创建草稿');
+const primaryBtn = h('button', { type: 'button', class: 'btn btn-primary btn-block', onclick: () => onPrimary() }, '创建草稿');
 const footer = h(
   'footer',
   { class: 'actionbar' },
-  h('div', { class: 'actionbar-row' }, h('span', { class: 'actionbar-label', id: 'target-label' }, '写入到'), targetSeg.el),
-  h('div', { class: 'actionbar-row' }, footerMeta, primaryBtn),
+  h('span', { class: 'actionbar-label', 'aria-hidden': 'true' }, '写入到'),
+  targetSeg.el,
+  primaryBtn,
 );
 
-document.getElementById('app')!.append(header, h('div', { class: 'tabs-wrap' }, tabList), h('main', { class: 'main' }, Object.values(panels)), footer);
+const app = document.getElementById('app')!;
+app.append(header, h('div', { class: 'tabs-wrap' }, tabList), h('main', { class: 'main' }, Object.values(panels)), footer);
+// The action bar floats over the content (frosted glass); panels reserve its height at the bottom.
+let footerHeight = 0;
+new ResizeObserver(([entry]) => {
+  const height = Math.round(entry.borderBoxSize[0].blockSize);
+  if (height === footerHeight) return;
+  footerHeight = height;
+  app.style.setProperty('--footer-h', `${height}px`);
+}).observe(footer);
 
 // ---------------------------------------------------------------------------
 // Views
@@ -171,38 +180,63 @@ const STAT_LABELS: [keyof ArticleDoc['stats'], string][] = [
   ['characters', '字符'],
 ];
 
+let reportDoc: ArticleDoc | null = null;
+
 function renderReport() {
   const { doc } = state;
+  if (doc === reportDoc) return;
+  reportDoc = doc;
   const stats = h(
     'div',
     { class: 'card stats' },
-    STAT_LABELS.map(([key, label]) => h('div', { class: 'stat' }, h('div', { class: 'stat-value' }, doc.stats[key].toLocaleString('zh-CN')), h('div', { class: 'stat-label' }, label))),
+    STAT_LABELS.map(([key, label]) =>
+      h('div', { class: doc.stats[key] ? 'stat' : 'stat stat-zero' }, h('div', { class: 'stat-value' }, doc.stats[key].toLocaleString('zh-CN')), h('div', { class: 'stat-label' }, label)),
+    ),
   );
+  const labelCounts = new Map<string, number>();
+  for (const label of degradeLabels(doc).values()) labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+  const changes = labelCounts.size
+    ? h('p', { class: 'report-note' }, `为适配 X：${[...labelCounts].map(([label, n]) => `${label} ${n} 处`).join('，')}`)
+    : null;
   const groups = groupWarnings(doc.warnings);
   const body = groups.length
     ? groups.map((g) =>
         h(
           'section',
-          { class: 'card report-group', 'aria-label': g.label },
-          h('div', { class: 'report-head' }, icon('alert', 16), h('span', { class: 'report-label' }, g.label), h('span', { class: 'count count-warn' }, g.items.length)),
+          { class: 'report-group', 'aria-label': g.label },
+          h('h3', { class: 'report-head' }, h('span', { class: 'report-label' }, g.label), h('span', { class: 'report-meta' }, `${g.items.length} 处`)),
           h(
             'ul',
-            { class: 'report-items' },
+            { class: 'card report-items' },
             g.items.map((w) =>
               h(
                 'li',
                 null,
-                h('span', { class: 'report-msg' }, w.message),
                 w.line
-                  ? h('button', { type: 'button', class: 'line-link', 'aria-label': `跳到第 ${w.line} 行`, onclick: () => jumpToLine(w.line!) }, `第 ${w.line} 行`)
-                  : null,
+                  ? h(
+                      'button',
+                      { type: 'button', class: 'report-row', 'aria-label': `${w.message}，跳到第 ${w.line} 行`, onclick: () => jumpToLine(w.line!) },
+                      h('span', { class: 'report-msg' }, w.message),
+                      h('span', { class: 'line-link' }, `第 ${w.line} 行`, icon('chevron', 14)),
+                    )
+                  : h('span', { class: 'report-row' }, h('span', { class: 'report-msg' }, w.message)),
               ),
             ),
           ),
         ),
       )
     : [h('div', { class: 'card empty' }, icon('check', 28), h('p', null, '没有需要注意的转换'))];
-  panels.report.replaceChildren(h('div', { class: 'report' }, h('h2', { class: 'section-title' }, '转换概览'), stats, groups.length ? h('h2', { class: 'section-title' }, `提示（${doc.warnings.length}）`) : null, body));
+  panels.report.replaceChildren(
+    h(
+      'div',
+      { class: 'report' },
+      h('h2', { class: 'section-title' }, '转换概览'),
+      stats,
+      changes,
+      groups.length ? h('h2', { class: 'section-title' }, `需要注意（${doc.warnings.length}）`) : null,
+      body,
+    ),
+  );
 }
 
 function jumpToLine(line: number) {
@@ -337,13 +371,13 @@ function renderFooter() {
     targetSeg.set('new');
   }
   const images = collectImages(state.doc).length;
-  const parts = [state.mode === 'new' ? '新建一篇草稿' : `当前草稿 …${articleId!.slice(-6)}`];
-  if (images) parts.push(`${images} 张图片`);
-  footerMeta.textContent = parts.join(' · ');
-  primaryBtn.textContent = PRIMARY_LABEL[state.mode];
+  const parts = [state.mode === 'new' ? '新建一篇草稿' : `写入当前草稿 …${articleId!.slice(-6)}`];
+  if (images) parts.push(`含 ${images} 张图片`);
   const empty = !state.hasText;
+  primaryBtn.textContent = PRIMARY_LABEL[state.mode];
   primaryBtn.disabled = empty || !!state.run || !!state.status?.busy;
-  primaryBtn.title = empty ? '编辑器里还没有内容' : state.status?.busy ? '另一个写入任务正在进行' : '';
+  primaryBtn.title = empty ? '编辑器里还没有内容' : state.status?.busy ? '另一个写入任务正在进行' : parts.join('，');
+  primaryBtn.setAttribute('aria-label', `${PRIMARY_LABEL[state.mode]}：${primaryBtn.title}`);
 }
 
 function onPrimary() {

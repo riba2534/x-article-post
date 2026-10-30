@@ -121,9 +121,12 @@ function renderBlock(block: Block): HTMLElement {
   }
 }
 
-function withBadge(el: HTMLElement, label: string | undefined): HTMLElement {
+/** Changed blocks get a quiet 2px rule on the left; the details live in the report. */
+function markChanged(el: HTMLElement, label: string | undefined): HTMLElement {
   if (!label) return el;
-  return h('div', { class: 'x-badged' }, h('span', { class: 'x-badge' }, label), el);
+  el.classList.add('x-changed');
+  el.title = `${label}（详见报告）`;
+  return el;
 }
 
 export function renderPreview(doc: ArticleDoc, root: HTMLElement): void {
@@ -136,14 +139,14 @@ export function renderPreview(doc: ArticleDoc, root: HTMLElement): void {
 
   let list: HTMLElement | null = null;
   doc.blocks.forEach((block, i) => {
-    const el = withBadge(renderBlock(block), labels.get(i));
+    const el = markChanged(renderBlock(block), labels.get(i));
     if (block.kind === 'text' && (block.type === 'unordered-list-item' || block.type === 'ordered-list-item')) {
       const tag = block.type === 'ordered-list-item' ? 'ol' : 'ul';
       if (!list || list.tagName.toLowerCase() !== tag) {
         list = h(tag, { class: 'x-list' });
         article.append(list);
       }
-      list.append(el.tagName === 'LI' ? el : h('li', { class: 'x-li-badged' }, el));
+      list.append(el);
       return;
     }
     list = null;

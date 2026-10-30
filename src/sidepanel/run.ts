@@ -76,8 +76,8 @@ export function openRunView(onCancel: () => void): RunView {
             'div',
             { class: 'result result-ok', role: 'status' },
             h('div', { class: 'result-icon' }, icon('check', 40)),
-            h('p', { class: 'result-lead' }, '内容已写入 X 草稿，发布前请在 X 上检查一遍。'),
-            h('dl', { class: 'result-rows' }, rows.flatMap(([k, v]) => [h('dt', null, k), h('dd', { class: k === '图片' && failedImages ? 'warn-text' : '' }, v)])),
+            h('p', { class: 'result-lead' }, failedImages ? `内容已写入 X 草稿，有 ${failedImages} 张图片未上传，可在 X 上补传。` : '内容已写入 X 草稿，发布前请在 X 上检查一遍。'),
+            h('dl', { class: 'result-rows' }, rows.flatMap(([k, v]) => [h('dt', null, k), h('dd', null, v)])),
             notes.length
               ? h('details', { class: 'result-notes' }, h('summary', null, `${notes.length} 条提示`), h('ul', null, notes.map((n) => h('li', null, n))))
               : null,
