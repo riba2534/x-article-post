@@ -110,7 +110,7 @@ function confirmCoverDialog(): boolean {
   if (!dialog) return false;
   for (const button of dialog.querySelectorAll<HTMLElement>('button, [role="button"]')) {
     const label = `${button.getAttribute('aria-label') ?? ''} ${button.textContent ?? ''}`.trim().toLowerCase();
-    if (!label || FORBIDDEN.test(label)) continue;
+    if (!label || FORBIDDEN.test(label) || button.matches(':disabled, [aria-disabled="true"]')) continue;
     if (button.getAttribute('data-testid') === 'applyButton' || DONE_LABELS.some((w) => label === w || label.split(/\s+/).includes(w))) {
       button.click();
       return true;
@@ -139,12 +139,35 @@ export async function setCover(file: File, checkCancel: () => void, timeoutMs = 
   input.files = dt.files;
   input.dispatchEvent(new Event('change', { bubbles: true }));
   const deadline = Date.now() + timeoutMs;
-  let confirmed = false;
-  while (Date.now() < deadline) {
+  for (let tick = 0; Date.now() < deadline; tick++) {
     checkCancel();
     await sleep(500);
-    if (!confirmed && confirmCoverDialog()) confirmed = true;
+    // The crop dialog may ignore an early click while the image loads: retry every 2 s.
+    if (tick % 4 === 1) confirmCoverDialog();
     if (!document.querySelector('[role="dialog"]') && coverImages().some((src) => !before.has(src))) return { ok: true };
   }
   return { ok: false, warning: '封面上传超时' };
+}
+
+// X autosaves body edits with its own ArticleEntityUpdateContent request, debounced ~3 s after
+// the last change. Upload completions also send immediate saves carrying an older state, so only
+// a save that starts after the debounce window proves the latest edit was sent. We only observe
+// resource timings (read-only).
+const SAVE_DEBOUNCE_MS = 2500;
+const contentSaves: number[] = [];
+new PerformanceObserver((list) => {
+  for (const e of list.getEntries()) {
+    if (/\/graphql\/[^/]+\/ArticleEntityUpdateContent\b/.test(e.name)) contentSaves.push(e.startTime);
+  }
+  contentSaves.splice(0, Math.max(0, contentSaves.length - 20));
+}).observe({ type: 'resource' });
+
+/** Resolves true once X's debounced save for the edit made at `since` (performance.now()) completed. */
+export async function waitContentSaved(since: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (contentSaves.some((t) => t >= since + SAVE_DEBOUNCE_MS)) return true;
+    await sleep(250);
+  }
+  return false;
 }

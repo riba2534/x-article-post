@@ -131,7 +131,7 @@ function cancel(runId: string): boolean {
 export function initWriter(): void {
   chrome.runtime.onMessage.addListener((msg: RuntimeMessage, sender, sendResponse) => {
     // Only extension pages talk to the writer; content scripts in web pages do not.
-    if (sender.id !== chrome.runtime.id || sender.tab) return false;
+    if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL(''))) return false;
     switch (msg?.type) {
       case 'xap:write':
         runWrite(msg.request, () => {}).then(sendResponse);
