@@ -43,7 +43,7 @@ export interface Editor {
   goToLine(line: number): void;
 }
 
-export function createEditor(parent: HTMLElement, initial: string, onChange: (text: string) => void): Editor {
+export function createEditor(parent: HTMLElement, initial: string, onChange: () => void): Editor {
   const view = new EditorView({
     parent,
     state: EditorState.create({
@@ -60,7 +60,7 @@ export function createEditor(parent: HTMLElement, initial: string, onChange: (te
         EditorView.contentAttributes.of({ 'aria-label': 'Markdown 编辑器' }),
         theme,
         EditorView.updateListener.of((u) => {
-          if (u.docChanged) onChange(u.state.doc.toString());
+          if (u.docChanged) onChange();
         }),
       ],
     }),

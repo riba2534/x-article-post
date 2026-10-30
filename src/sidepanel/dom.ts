@@ -23,6 +23,10 @@ export function append(el: Element, children: (Child | Child[])[]): void {
   }
 }
 
+export function uid(prefix: string): string {
+  return `${prefix}-${crypto.randomUUID()}`;
+}
+
 const PATHS = {
   logo: '<path d="M5 4h14v16H5z"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7"/>',
   gear:

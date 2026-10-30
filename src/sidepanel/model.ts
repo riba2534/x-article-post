@@ -62,7 +62,7 @@ export function degradeLabels(doc: ArticleDoc): Map<number, string> {
   return labels;
 }
 
-export const WARNING_LABELS: Record<WarningCode, string> = {
+const WARNING_LABELS: Record<WarningCode, string> = {
   'heading-demoted': '标题降级',
   'inline-code': '行内代码',
   'inline-math': '行内公式',

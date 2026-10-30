@@ -1,23 +1,11 @@
-// X-like rendering of an ArticleDoc. Rebuilt on every change; Mermaid SVGs are cached by source.
+// X-like rendering of an ArticleDoc. Loaded lazily on first preview (KaTeX + unified are heavy).
+import 'katex/dist/katex.min.css';
 import katex from 'katex';
 import type { ArticleDoc, Block, ImageBlock, MarkdownBlock, TextBlock } from '../shared/types';
 import { isSafeUrl, markdownToHtml } from '../pipeline/markdown-html';
 import { renderMermaidSvg } from '../pipeline/mermaid';
 import { h, icon } from './dom';
 import { degradeLabels, segmentInline } from './model';
-
-const mermaidCache = new Map<string, Promise<string>>();
-
-function mermaidSvg(code: string): Promise<string> {
-  let p = mermaidCache.get(code);
-  if (!p) {
-    if (mermaidCache.size > 40) mermaidCache.delete(mermaidCache.keys().next().value!);
-    p = renderMermaidSvg(code);
-    p.catch(() => mermaidCache.delete(code));
-    mermaidCache.set(code, p);
-  }
-  return p;
-}
 
 function renderTex(tex: string, displayMode: boolean): HTMLElement {
   const el = h(displayMode ? 'div' : 'span', { class: displayMode ? 'x-math' : 'x-math-inline' });
@@ -35,9 +23,7 @@ function renderInline(block: TextBlock): Node[] {
     if (seg.styles.includes('STRIKETHROUGH')) node = h('s', null, node);
     if (seg.styles.includes('ITALIC')) node = h('em', null, node);
     if (seg.styles.includes('BOLD')) node = h('strong', null, node);
-    if (seg.url) {
-      node = isSafeUrl(seg.url, 'href') ? h('a', { href: seg.url, target: '_blank', rel: 'noopener noreferrer' }, node) : node;
-    }
+    if (seg.url && isSafeUrl(seg.url, 'href')) node = h('a', { href: seg.url, target: '_blank', rel: 'noopener noreferrer' }, node);
     return node;
   });
 }
@@ -68,20 +54,16 @@ function enhanceMath(root: HTMLElement): void {
 }
 
 function renderMarkdown(block: MarkdownBlock): HTMLElement {
-  if (block.role === 'code') {
-    const body = block.markdown.replace(/^```[^\n]*\n?/, '').replace(/\n?```\s*$/, '');
-    return h(
-      'div',
-      { class: 'x-code' },
-      h('div', { class: 'x-code-lang' }, block.language || '纯文本'),
-      h('pre', null, h('code', null, body)),
-    );
-  }
-  const el = h('div', { class: `x-md x-md-${block.role}` });
-  el.innerHTML = markdownToHtml(block.markdown);
-  enhanceMath(el);
-  el.querySelectorAll('table').forEach((t) => t.replaceWith(h('div', { class: 'x-table-wrap' }, t.cloneNode(true))));
-  return el;
+  const body = h('div', { class: `x-md x-md-${block.role}` });
+  body.innerHTML = markdownToHtml(block.markdown);
+  if (block.role === 'code') return h('div', { class: 'x-code' }, h('div', { class: 'x-code-lang' }, block.language || '纯文本'), body);
+  enhanceMath(body);
+  body.querySelectorAll('table').forEach((t) => {
+    const wrap = h('div', { class: 'x-table-wrap' });
+    t.replaceWith(wrap);
+    wrap.append(t);
+  });
+  return body;
 }
 
 function renderImage(block: ImageBlock): HTMLElement {
@@ -97,7 +79,7 @@ function renderImage(block: ImageBlock): HTMLElement {
     }
   } else if (source.type === 'mermaid') {
     const box = h('div', { class: 'x-mermaid', 'aria-busy': 'true' }, h('span', { class: 'x-muted' }, '正在渲染 Mermaid'));
-    mermaidSvg(source.code).then(
+    renderMermaidSvg(source.code).then(
       (svg) => {
         box.innerHTML = svg;
         box.removeAttribute('aria-busy');

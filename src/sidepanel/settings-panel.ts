@@ -6,7 +6,8 @@ import { field, row, segmented, setSwitch, switchControl } from './controls';
 import { h, icon } from './dom';
 import { openSheet } from './sheet';
 
-export const ALL_SITES = ['https://*/*', 'http://*/*'];
+// The manifest's optional host permissions are exactly the "all sites" grant.
+const ALL_SITES = chrome.runtime.getManifest().optional_host_permissions ?? [];
 
 export interface SettingsContext {
   settings: Settings;

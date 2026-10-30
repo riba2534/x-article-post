@@ -8,7 +8,6 @@ export interface RunView {
   update(p: Pick<WriteProgress, 'phase' | 'message' | 'current' | 'total'>): void;
   setCancelling(): void;
   showResult(result: WriteResult, actions: ResultActions): void;
-  close(): void;
 }
 
 export interface ResultActions {
@@ -23,7 +22,7 @@ const ERROR_TEXT: Record<string, string> = {
   cancelled: '已取消写入',
 };
 
-export function errorText(error: string | undefined): string {
+function errorText(error: string | undefined): string {
   if (!error) return '写入失败，原因未知';
   return ERROR_TEXT[error] ?? error;
 }
@@ -106,6 +105,5 @@ export function openRunView(onCancel: () => void): RunView {
       }
       sheet.body.querySelector<HTMLElement>('.btn')?.focus();
     },
-    close: () => sheet.close(),
   };
 }

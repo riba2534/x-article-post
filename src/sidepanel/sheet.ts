@@ -1,8 +1,7 @@
 // Modal bottom sheet: focus moves in on open, Escape closes (when allowed), focus returns on close.
-import { h, icon } from './dom';
+import { h, icon, uid } from './dom';
 
 export interface Sheet {
-  el: HTMLElement;
   body: HTMLElement;
   setTitle(title: string): void;
   setClosable(closable: boolean): void;
@@ -14,7 +13,7 @@ const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select
 export function openSheet(title: string, content: Node, opts: { closable?: boolean; onClose?: () => void } = {}): Sheet {
   let closable = opts.closable ?? true;
   const previous = document.activeElement as HTMLElement | null;
-  const titleId = `sheet-title-${Math.random().toString(36).slice(2, 8)}`;
+  const titleId = uid('sheet-title');
   const heading = h('h2', { id: titleId, class: 'sheet-title' }, title);
   const closeBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': '关闭' }, icon('close'));
   const body = h('div', { class: 'sheet-body' }, content);
@@ -56,5 +55,5 @@ export function openSheet(title: string, content: Node, opts: { closable?: boole
     closeBtn.hidden = !value;
   };
   setClosable(closable);
-  return { el: layer, body, setTitle: (t) => (heading.textContent = t), setClosable, close };
+  return { body, setTitle: (t) => (heading.textContent = t), setClosable, close };
 }

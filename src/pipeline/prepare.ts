@@ -13,8 +13,10 @@ import type {
   WriteRequest,
   WriteTarget,
 } from '../shared/types';
+import { errorMessage } from './errors';
 import { FETCH_CONCURRENCY, fetchImageBytes, mapLimit } from './fetch';
 import { bytesToBase64, extensionFor, normalizeImage, type NormalizedImage } from './image';
+import { markdownImageUrls } from './markdown-html';
 import { mermaidToPng } from './mermaid';
 import { tableToPng } from './table';
 
@@ -49,13 +51,10 @@ export function collectImages(doc: ArticleDoc): ImageRef[] {
   return refs;
 }
 
-const MD_IMAGE = /!\[[^\]]*\]\(\s*<?([^\s)>]+)/g;
-const HTML_IMAGE = /<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi;
-
 /** Remote URLs a source needs to fetch (table cells may hold several). */
 export function sourceUrls(source: ImageSource): string[] {
   if (source.type === 'url') return [source.url];
-  if (source.type === 'table') return [...source.markdown.matchAll(MD_IMAGE), ...source.markdown.matchAll(HTML_IMAGE)].map((m) => m[1]);
+  if (source.type === 'table') return markdownImageUrls(source.markdown);
   return [];
 }
 
@@ -77,10 +76,6 @@ export function collectPermissionOrigins(doc: ArticleDoc): string[] {
     }
   }
   return [...origins];
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function describe(source: ImageSource): string {

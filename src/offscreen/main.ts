@@ -1,11 +1,8 @@
 // Offscreen document: runs the prepare pipeline (needs DOM for Mermaid/canvas) for agent requests.
 import { convertMarkdown } from '../core/index';
+import { errorMessage } from '../pipeline/errors';
 import { prepareWrite } from '../pipeline/prepare';
 import type { RuntimeMessage } from '../shared/types';
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 chrome.runtime.onMessage.addListener((msg: RuntimeMessage, _sender, sendResponse) => {
   if (msg?.type === 'xap:prepare') {

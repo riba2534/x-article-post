@@ -1019,6 +1019,12 @@ select {
   border-radius: 12px;
   background: #f7f9f9;
 }
+.x-code .x-md {
+  margin: 0;
+}
+.x-code .x-md pre {
+  border-radius: 0;
+}
 .x-article code {
   font-family: var(--mono);
   font-size: 0.88em;

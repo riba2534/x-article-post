@@ -1,15 +1,14 @@
 // Side panel app: editor, preview, report, write flow, settings.
-import 'katex/dist/katex.min.css';
 import './styles.css';
 import { convertMarkdown } from '../core/index';
-import { collectPermissionOrigins, prepareWrite } from '../pipeline/prepare';
+import { errorMessage } from '../pipeline/errors';
+import { assembleRequest, collectImages, collectPermissionOrigins, prepareImageSource } from '../pipeline/prepare';
 import { DEFAULT_SETTINGS, DRAFT_KEY, loadSettings, type Settings } from '../shared/settings';
 import type { ArticleDoc, ExtensionStatus, RuntimeMessage, WriteResult, WriteTarget } from '../shared/types';
 import { segmented } from './controls';
 import { h, icon } from './dom';
 import { createEditor } from './editor';
 import { buildTarget, countWords, groupWarnings, type TargetMode } from './model';
-import { renderPreview } from './preview';
 import { openRunView, type RunView } from './run';
 import { openSettings } from './settings-panel';
 import { openSheet } from './sheet';
@@ -33,6 +32,7 @@ const state = {
   mode: 'new' as TargetMode,
   run: null as Run | null,
   previewStale: true,
+  hasText: false,
 };
 
 let settingsSheet: ReturnType<typeof openSettings> | null = null;
@@ -42,7 +42,7 @@ function safeConvert(markdown: string): ArticleDoc {
     return convertMarkdown(markdown, state.settings.convert);
   } catch (err) {
     const doc = convertMarkdown('');
-    doc.warnings.push({ code: 'other', message: `转换出错：${err instanceof Error ? err.message : String(err)}` });
+    doc.warnings.push({ code: 'other', message: `转换出错：${errorMessage(err)}` });
     return doc;
   }
 }
@@ -138,18 +138,24 @@ function setView(view: View, focus = false) {
 
 for (const [key, tab] of Object.entries(tabs) as [View, HTMLButtonElement][]) tab.addEventListener('click', () => setView(key));
 tabList.addEventListener('keydown', (e) => {
-  const order: View[] = ['edit', 'preview', 'report'];
-  const i = order.indexOf(state.view);
-  if (e.key === 'ArrowRight') setView(order[(i + 1) % 3], true);
-  else if (e.key === 'ArrowLeft') setView(order[(i + 2) % 3], true);
-  else return;
+  const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+  if (!step) return;
   e.preventDefault();
+  const order = Object.keys(tabs) as View[];
+  setView(order[(order.indexOf(state.view) + step + order.length) % order.length], true);
 });
+
+let previewModule: Promise<typeof import('./preview')> | null = null;
 
 function refreshVisible() {
   if (state.view === 'preview' && state.previewStale) {
-    renderPreview(state.doc, panels.preview);
     state.previewStale = false;
+    const doc = state.doc;
+    previewModule ??= import('./preview');
+    void previewModule.then(({ renderPreview }) => {
+      // A newer doc may have arrived while the module loaded; render only the latest.
+      if (doc === state.doc) renderPreview(doc, panels.preview);
+    });
   }
   if (state.view === 'report') renderReport();
 }
@@ -210,15 +216,18 @@ function jumpToLine(line: number) {
 let convertTimer: ReturnType<typeof setTimeout> | undefined;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
-function onText(text: string) {
-  wordCount.textContent = `${countWords(text).toLocaleString('zh-CN')} 字`;
+// Whole-document work (string copy, word count, convert, save) waits for a pause in typing.
+function onText() {
   clearTimeout(convertTimer);
-  convertTimer = setTimeout(() => updateDoc(text), 250);
+  convertTimer = setTimeout(() => updateDoc(), 250);
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => void chrome.storage.local.set({ [DRAFT_KEY]: text }).catch(() => undefined), 500);
+  saveTimer = setTimeout(() => void chrome.storage.local.set({ [DRAFT_KEY]: editor.getText() }).catch(() => undefined), 500);
 }
 
-function updateDoc(text = editor.getText()) {
+function updateDoc() {
+  const text = editor.getText();
+  state.hasText = /\S/.test(text);
+  wordCount.textContent = `${countWords(text).toLocaleString('zh-CN')} 字`;
   state.doc = safeConvert(text);
   state.previewStale = true;
   const n = state.doc.warnings.length;
@@ -298,12 +307,19 @@ function renderStatus() {
   settingsSheet?.updateStatus(s);
 }
 
+let lastStatus = '';
+
 async function pollStatus() {
+  let status: ExtensionStatus | null;
   try {
-    state.status = ((await chrome.runtime.sendMessage({ type: 'xap:status' } satisfies RuntimeMessage)) as ExtensionStatus | undefined) ?? null;
+    status = ((await chrome.runtime.sendMessage({ type: 'xap:status' } satisfies RuntimeMessage)) as ExtensionStatus | undefined) ?? null;
   } catch {
-    state.status = null;
+    status = null;
   }
+  const key = JSON.stringify(status);
+  if (key === lastStatus) return;
+  lastStatus = key;
+  state.status = status;
   renderStatus();
 }
 
@@ -315,18 +331,17 @@ const PRIMARY_LABEL: Record<TargetMode, string> = { new: '创建草稿', append:
 function renderFooter() {
   const articleId = state.status?.xTab?.articleId;
   const noDraft = '先在 X 打开一篇草稿';
-  targetSeg.setDisabled('append', !articleId, articleId ? '' : noDraft);
-  targetSeg.setDisabled('replace', !articleId, articleId ? '' : noDraft);
+  for (const mode of ['append', 'replace'] as const) targetSeg.setDisabled(mode, !articleId, articleId ? '' : noDraft);
   if (!articleId && state.mode !== 'new') {
     state.mode = 'new';
     targetSeg.set('new');
   }
-  const images = state.doc.stats.images + state.doc.stats.mermaid + (state.doc.cover ? 1 : 0);
+  const images = collectImages(state.doc).length;
   const parts = [state.mode === 'new' ? '新建一篇草稿' : `当前草稿 …${articleId!.slice(-6)}`];
   if (images) parts.push(`${images} 张图片`);
   footerMeta.textContent = parts.join(' · ');
   primaryBtn.textContent = PRIMARY_LABEL[state.mode];
-  const empty = !editor.getText().trim();
+  const empty = !state.hasText;
   primaryBtn.disabled = empty || !!state.run || !!state.status?.busy;
   primaryBtn.title = empty ? '编辑器里还没有内容' : state.status?.busy ? '另一个写入任务正在进行' : '';
 }
@@ -359,7 +374,7 @@ function startRun() {
   const doc = safeConvert(markdown);
   const origins = collectPermissionOrigins(doc);
   const granted = origins.length ? chrome.permissions.request({ origins }).catch(() => false) : Promise.resolve(true);
-  void runWrite(markdown, target, granted, doc.warnings.length);
+  void runWrite(doc, target, granted);
 }
 
 function failure(runId: string | undefined, error: string): WriteResult {
@@ -380,7 +395,7 @@ function finishRun(run: Run, result: WriteResult) {
   void pollStatus();
 }
 
-async function runWrite(markdown: string, target: WriteTarget, granted: Promise<boolean>, convertWarnings: number) {
+async function runWrite(doc: ArticleDoc, target: WriteTarget, granted: Promise<boolean>) {
   const run: Run = {
     stage: 'prepare',
     cancelled: false,
@@ -392,20 +407,23 @@ async function runWrite(markdown: string, target: WriteTarget, granted: Promise<
   renderFooter();
   try {
     await granted;
-    const { request, doc } = await prepareWrite(markdown, state.settings.convert, target, (p) => {
-      run.runId ??= p.runId;
-      if (!run.cancelled) run.view.update(p);
+    // Reuse the doc converted in the click handler (same one the permissions were requested for).
+    const prepared = await assembleRequest(doc, target, prepareImageSource, {
+      onProgress: (p) => {
+        if (!run.cancelled) run.view.update(p);
+      },
     });
+    const { request } = prepared;
     if (run.cancelled) return finishRun(run, failure(request.runId, 'cancelled'));
     run.runId = request.runId;
     run.imagesTotal = Object.keys(request.images).length;
-    run.prepareWarnings = doc.warnings.slice(convertWarnings).map((w) => w.message);
+    run.prepareWarnings = prepared.doc.warnings.slice(doc.warnings.length).map((w) => w.message);
     run.stage = 'write';
     run.view.update({ phase: 'tab', message: '正在连接 X 草稿页' });
     const result = (await chrome.runtime.sendMessage({ type: 'xap:write', request } satisfies RuntimeMessage)) as WriteResult | undefined;
     finishRun(run, result ?? failure(run.runId, '后台没有返回结果'));
   } catch (err) {
-    finishRun(run, failure(run.runId, err instanceof Error ? err.message : String(err)));
+    finishRun(run, failure(run.runId, errorMessage(err)));
   }
 }
 
@@ -468,7 +486,7 @@ async function boot() {
   state.settings = settings;
   const draft = (stored as Record<string, unknown>)[DRAFT_KEY];
   if (typeof draft === 'string' && draft) editor.setText(draft);
-  else onText('');
+  clearTimeout(saveTimer);
   updateDoc();
   void pollStatus();
   setInterval(() => void pollStatus(), 2000);

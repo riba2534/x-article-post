@@ -1,4 +1,5 @@
 // Mermaid -> SVG (preview) and -> 2x PNG on white (upload). Mermaid is loaded lazily.
+import { errorMessage } from './errors';
 import { FONT_STACK, svgToPng, type NormalizedImage } from './image';
 
 type Mermaid = typeof import('mermaid').default;
@@ -22,14 +23,28 @@ function loadMermaid(): Promise<Mermaid> {
   return loader;
 }
 
-export async function renderMermaidSvg(code: string): Promise<string> {
+const cache = new Map<string, Promise<string>>();
+
+/** Renders (and caches by source) so the preview and the upload share one layout pass. */
+export function renderMermaidSvg(code: string): Promise<string> {
+  let svg = cache.get(code);
+  if (!svg) {
+    if (cache.size >= 40) cache.delete(cache.keys().next().value!);
+    svg = render(code);
+    svg.catch(() => cache.delete(code));
+    cache.set(code, svg);
+  }
+  return svg;
+}
+
+async function render(code: string): Promise<string> {
   const mermaid = await loadMermaid();
   const id = `xap-mermaid-${++seq}`;
   try {
     const { svg } = await mermaid.render(id, code);
     return svg;
   } catch (err) {
-    throw new Error(`Mermaid 语法错误：${err instanceof Error ? err.message.split('\n')[0] : String(err)}`);
+    throw new Error(`Mermaid 语法错误：${errorMessage(err).split('\n')[0]}`);
   } finally {
     // Mermaid leaves its scratch element behind when parsing fails.
     document.getElementById(`d${id}`)?.remove();

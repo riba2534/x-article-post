@@ -45,11 +45,9 @@ describe('collectPermissionOrigins', () => {
     expect(collectPermissionOrigins(doc)).toEqual(['http://localhost/*']);
   });
 
-  it('finds html <img> inside tables', () => {
-    expect(sourceUrls({ type: 'table', markdown: '| a |\n|---|\n| <img src="https://h.example/x.png"> ![b](<https://i.example/y.png>) |' })).toEqual([
-      'https://i.example/y.png',
-      'https://h.example/x.png',
-    ]);
+  it('finds inline and reference images in tables, ignoring raw HTML like the renderer does', () => {
+    const markdown = '| a |\n|---|\n| <img src="https://h.example/x.png"> ![b](<https://i.example/y.png>) ![c][r] |\n\n[r]: https://r.example/z.png';
+    expect(sourceUrls({ type: 'table', markdown })).toEqual(['https://i.example/y.png', 'https://r.example/z.png']);
   });
 });
 

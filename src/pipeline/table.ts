@@ -1,13 +1,13 @@
 // Markdown table (with images in cells) -> 2x PNG via SVG foreignObject. Cell images are
 // inlined as data: URLs because an SVG used as an image cannot load external resources.
-import { fetchImageBytes } from './fetch';
-import { bytesToBase64, FONT_STACK, sniffMime, svgToPng, type NormalizedImage } from './image';
+import { FETCH_CONCURRENCY, fetchImageBytes, mapLimit } from './fetch';
+import { bytesToBase64, FONT_STACK, normalizeImage, svgToPng, type NormalizedImage } from './image';
 import { markdownToHtml } from './markdown-html';
 
 const TABLE_WIDTH = 680;
 const XHTML = 'http://www.w3.org/1999/xhtml';
 
-export const TABLE_CSS = `
+const TABLE_CSS = `
 .xap-table{font-family:${FONT_STACK};font-size:15px;line-height:1.5;color:#0f1419;background:#fff;padding:16px;width:${TABLE_WIDTH}px;box-sizing:border-box}
 .xap-table table{border-collapse:collapse;width:100%}
 .xap-table th,.xap-table td{border:1px solid #cfd9de;padding:8px 12px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
@@ -17,22 +17,18 @@ export const TABLE_CSS = `
 .xap-table a{color:#1d9bf0;text-decoration:none}
 `;
 
+/** Cell images go through the same download limits and normalization as block images. */
 async function inlineImages(root: HTMLElement): Promise<void> {
-  await Promise.all(
-    [...root.querySelectorAll('img')].map(async (img) => {
-      const src = img.getAttribute('src') ?? '';
-      try {
-        if (!src) throw new Error('missing src');
-        const { bytes } = await fetchImageBytes(src);
-        const mime = sniffMime(bytes);
-        if (!mime) throw new Error('unknown image');
-        img.setAttribute('src', `data:${mime};base64,${bytesToBase64(bytes)}`);
-        await img.decode().catch(() => undefined);
-      } catch {
-        img.replaceWith(document.createTextNode(img.getAttribute('alt') || '[图片]'));
-      }
-    }),
-  );
+  await mapLimit([...root.querySelectorAll('img')], FETCH_CONCURRENCY, async (img) => {
+    try {
+      const { bytes, contentType } = await fetchImageBytes(img.getAttribute('src') ?? '');
+      const image = await normalizeImage(bytes, contentType);
+      img.setAttribute('src', `data:${image.mime};base64,${bytesToBase64(image.bytes)}`);
+      await img.decode().catch(() => undefined);
+    } catch {
+      img.replaceWith(document.createTextNode(img.getAttribute('alt') || '[图片]'));
+    }
+  });
 }
 
 export async function tableToPng(markdown: string): Promise<NormalizedImage> {
@@ -51,12 +47,11 @@ export async function tableToPng(markdown: string): Promise<NormalizedImage> {
     await inlineImages(box);
     const width = TABLE_WIDTH;
     const height = Math.ceil(box.getBoundingClientRect().height);
-    const wrapper = document.createElementNS(XHTML, 'div');
-    wrapper.append(style.cloneNode(true), box.cloneNode(true));
-    const xhtml = new XMLSerializer().serializeToString(wrapper);
+    const serializer = new XMLSerializer();
     const svg =
       `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
-      `<foreignObject x="0" y="0" width="${width}" height="${height}">${xhtml}</foreignObject></svg>`;
+      `<foreignObject x="0" y="0" width="${width}" height="${height}"><div xmlns="${XHTML}">` +
+      `${serializer.serializeToString(style)}${serializer.serializeToString(box)}</div></foreignObject></svg>`;
     return await svgToPng(svg, { scale: 2, background: '#ffffff' });
   } finally {
     host.remove();

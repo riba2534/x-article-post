@@ -1,8 +1,8 @@
 // Remote image download with the limits the pipeline promises: no cookies, size cap, timeout,
 // and no redirects from a public host into a private network.
 
-export const MAX_FETCH_BYTES = 20 * 1024 * 1024;
-export const FETCH_TIMEOUT_MS = 30_000;
+const MAX_FETCH_BYTES = 20 * 1024 * 1024;
+const FETCH_TIMEOUT_MS = 30_000;
 export const FETCH_CONCURRENCY = 4;
 
 export interface FetchedBytes {

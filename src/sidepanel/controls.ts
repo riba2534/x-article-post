@@ -1,5 +1,5 @@
 // Small form controls in the panel's style: switch, segmented control, labelled row.
-import { h } from './dom';
+import { h, uid } from './dom';
 
 export function switchControl(label: string, checked: boolean, onToggle: (next: boolean) => void): HTMLButtonElement {
   const btn = h('button', { type: 'button', role: 'switch', class: 'switch', 'aria-checked': String(checked), 'aria-label': label }, h('span', { class: 'switch-knob' }));
@@ -18,8 +18,6 @@ export function setSwitch(btn: HTMLButtonElement, checked: boolean): void {
 export interface SegmentOption<T extends string> {
   value: T;
   label: string;
-  disabled?: boolean;
-  title?: string;
 }
 
 export interface Segmented<T extends string> {
@@ -32,7 +30,7 @@ export interface Segmented<T extends string> {
 export function segmented<T extends string>(label: string, options: SegmentOption<T>[], value: T, onSelect: (v: T) => void, cls = ''): Segmented<T> {
   const el = h('div', { class: `seg ${cls}`, role: 'radiogroup', 'aria-label': label });
   const buttons = options.map((o) =>
-    h('button', { type: 'button', role: 'radio', class: 'seg-item', 'data-value': o.value, title: o.title, onclick: () => choose(o.value, true) }, o.label),
+    h('button', { type: 'button', role: 'radio', class: 'seg-item', 'data-value': o.value, onclick: () => choose(o.value) }, o.label),
   );
   el.append(...buttons);
   const enabled = () => buttons.filter((b) => !b.disabled);
@@ -43,9 +41,9 @@ export function segmented<T extends string>(label: string, options: SegmentOptio
       b.tabIndex = on ? 0 : -1;
     }
   };
-  const choose = (v: T, notify: boolean) => {
+  const choose = (v: T) => {
     set(v);
-    if (notify) onSelect(v);
+    onSelect(v);
   };
   el.addEventListener('keydown', (e) => {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
@@ -54,12 +52,9 @@ export function segmented<T extends string>(label: string, options: SegmentOptio
     const i = list.indexOf(document.activeElement as HTMLButtonElement);
     const next = list[(i + (e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1) + list.length) % list.length];
     next.focus();
-    choose(next.dataset.value as T, true);
+    choose(next.dataset.value as T);
   });
   set(value);
-  options.forEach((o, i) => {
-    buttons[i].disabled = !!o.disabled;
-  });
   return {
     el,
     set,
@@ -78,7 +73,7 @@ export function row(label: string, control: Node, hint?: string): HTMLElement {
 
 /** `control` defaults to the input; pass a wrapper (e.g. input + button) to render that instead. */
 export function field(label: string, input: HTMLInputElement, hint?: string, control: Node = input): HTMLElement {
-  const id = `f-${Math.random().toString(36).slice(2, 8)}`;
+  const id = uid('f');
   input.id = id;
   return h('div', { class: 'field' }, h('label', { for: id, class: 'row-label' }, label), control, hint ? h('div', { class: 'row-hint' }, hint) : null);
 }

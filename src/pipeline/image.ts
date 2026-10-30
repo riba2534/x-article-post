@@ -50,9 +50,7 @@ export function extensionFor(mime: string): string {
   return { 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }[mime] ?? 'png';
 }
 
-/** Reads width/height (or the viewBox) from an SVG root. */
-export function svgIntrinsicSize(svg: string): { width: number; height: number } {
-  const root = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement;
+function sizeOf(root: Element): { width: number; height: number } {
   const num = (v: string | null) => (v && /^\s*[\d.]+\s*(px)?\s*$/.test(v) ? parseFloat(v) : NaN);
   let width = num(root.getAttribute('width'));
   let height = num(root.getAttribute('height'));
@@ -66,19 +64,9 @@ export function svgIntrinsicSize(svg: string): { width: number; height: number }
   return { width, height };
 }
 
-/** Pins explicit pixel width/height so the browser rasterizes the SVG at a known size. */
-function withSize(svg: string, width: number, height: number): string {
-  const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
-  const root = doc.documentElement;
-  if (!root.getAttribute('viewBox')) {
-    const size = svgIntrinsicSize(svg);
-    root.setAttribute('viewBox', `0 0 ${size.width} ${size.height}`);
-  }
-  root.setAttribute('width', String(width));
-  root.setAttribute('height', String(height));
-  root.removeAttribute('style');
-  if (!root.getAttribute('xmlns')) root.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-  return new XMLSerializer().serializeToString(doc);
+/** Reads width/height (or the viewBox) from an SVG root. */
+export function svgIntrinsicSize(svg: string): { width: number; height: number } {
+  return sizeOf(new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement);
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -91,43 +79,23 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-function loadImageElement(blob: Blob): Promise<HTMLImageElement> {
-  const url = URL.createObjectURL(blob);
-  return loadImage(url).finally(() => URL.revokeObjectURL(url));
-}
-
 type Drawable = CanvasImageSource & { width: number; height: number };
 
-async function encodeCanvas(source: Drawable, width: number, height: number, mime: string, quality?: number, background?: string): Promise<Blob> {
-  if (typeof OffscreenCanvas !== 'undefined') {
-    const canvas = new OffscreenCanvas(width, height);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('无法创建画布');
-    paint(ctx, source, width, height, background);
-    return canvas.convertToBlob({ type: mime, quality });
-  }
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
+function drawCanvas(source: Drawable, width: number, height: number, background?: string): OffscreenCanvas {
+  const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('无法创建画布');
-  paint(ctx, source, width, height, background);
-  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('图片编码失败'))), mime, quality));
-}
-
-function paint(
-  ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
-  source: Drawable,
-  width: number,
-  height: number,
-  background?: string,
-) {
   if (background) {
     ctx.fillStyle = background;
     ctx.fillRect(0, 0, width, height);
   }
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(source, 0, 0, width, height);
+  return canvas;
+}
+
+async function asImage(blob: Blob, size: { width: number; height: number }): Promise<NormalizedImage> {
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), mime: blob.type, ...size };
 }
 
 /**
@@ -138,14 +106,18 @@ async function encodeWithinLimits(source: Drawable, width: number, height: numbe
   let size = fitWithin(width, height, MAX_IMAGE_SIDE);
   for (let attempt = 0; attempt < 6; attempt++) {
     if (preferPng) {
-      const png = await encodeCanvas(source, size.width, size.height, 'image/png', undefined, background);
-      if (png.size <= MAX_IMAGE_BYTES) return { bytes: new Uint8Array(await png.arrayBuffer()), mime: 'image/png', ...size };
+      const png = await drawCanvas(source, size.width, size.height, background).convertToBlob({ type: 'image/png' });
+      if (png.size <= MAX_IMAGE_BYTES) return asImage(png, size);
     }
-    for (const q of [0.92, 0.85, 0.75]) {
-      const jpeg = await encodeCanvas(source, size.width, size.height, 'image/jpeg', q, background ?? '#fff');
-      if (jpeg.size <= MAX_IMAGE_BYTES) return { bytes: new Uint8Array(await jpeg.arrayBuffer()), mime: 'image/jpeg', ...size };
+    const flat = drawCanvas(source, size.width, size.height, background ?? '#fff');
+    let smallest = Infinity;
+    for (const quality of [0.92, 0.85, 0.75]) {
+      const jpeg = await flat.convertToBlob({ type: 'image/jpeg', quality });
+      if (jpeg.size <= MAX_IMAGE_BYTES) return asImage(jpeg, size);
+      smallest = Math.min(smallest, jpeg.size);
     }
-    size = { width: Math.max(1, Math.round(size.width * 0.75)), height: Math.max(1, Math.round(size.height * 0.75)) };
+    const k = Math.min(0.9, Math.sqrt(MAX_IMAGE_BYTES / smallest));
+    size = { width: Math.max(1, Math.round(size.width * k)), height: Math.max(1, Math.round(size.height * k)) };
   }
   throw new Error('图片压缩后仍超过 5 MB');
 }
@@ -157,10 +129,18 @@ export interface SvgRasterOptions {
 
 export async function svgToPng(svg: string, opts: SvgRasterOptions = {}): Promise<NormalizedImage> {
   const scale = opts.scale ?? 1;
-  const base = svgIntrinsicSize(svg);
+  const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+  const root = doc.documentElement;
+  const base = sizeOf(root);
   const target = fitWithin(Math.round(base.width * scale), Math.round(base.height * scale), MAX_IMAGE_SIDE);
+  // Pin the pixel size so the browser rasterizes at exactly the target resolution.
+  if (!root.getAttribute('viewBox')) root.setAttribute('viewBox', `0 0 ${base.width} ${base.height}`);
+  root.setAttribute('width', String(target.width));
+  root.setAttribute('height', String(target.height));
+  root.removeAttribute('style');
+  if (!root.getAttribute('xmlns')) root.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   // A data: URL (not a blob: URL) keeps Chrome from tainting the canvas when the SVG has foreignObject.
-  const img = await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(withSize(svg, target.width, target.height))}`);
+  const img = await loadImage(`data:image/svg+xml;base64,${bytesToBase64(new TextEncoder().encode(new XMLSerializer().serializeToString(doc)))}`);
   return encodeWithinLimits(img, target.width, target.height, true, opts.background);
 }
 
@@ -168,8 +148,7 @@ export async function normalizeImage(bytes: Uint8Array, contentType = ''): Promi
   const mime = sniffMime(bytes) ?? (contentType.includes('svg') ? 'image/svg+xml' : null);
   if (!mime) throw new Error('无法识别的图片格式');
   if (mime === 'image/svg+xml') return svgToPng(new TextDecoder().decode(bytes), { scale: 2 });
-  const blob = new Blob([bytes as BlobPart], { type: mime });
-  const img: Drawable = typeof createImageBitmap === 'function' ? await createImageBitmap(blob) : await loadImageElement(blob);
+  const img = await createImageBitmap(new Blob([bytes as BlobPart], { type: mime }));
   try {
     const { width, height } = img;
     if (PASS_THROUGH.has(mime) && bytes.byteLength <= MAX_IMAGE_BYTES && Math.max(width, height) <= MAX_IMAGE_SIDE) {
@@ -177,6 +156,6 @@ export async function normalizeImage(bytes: Uint8Array, contentType = ''): Promi
     }
     return await encodeWithinLimits(img, width, height, mime !== 'image/jpeg');
   } finally {
-    if ('close' in img && typeof img.close === 'function') img.close();
+    img.close();
   }
 }
