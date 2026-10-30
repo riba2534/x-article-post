@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SAVE_DEBOUNCE_MS, graphqlError, saveOpOf, watchSaves } from '../../src/main/saves';
-import { runWrite, saveError } from '../../src/main/write';
+import { SAVE_DEBOUNCE_MS, SAVE_SETTLE_MS, graphqlAnswer, saveOpOf, watchSaves } from '../../src/main/saves';
+import { UNOBSERVED_WARNING, runWrite, saveVerdict } from '../../src/main/write';
 import { ARTICLE_BLOCK_LIMIT, type WriteBlock } from '../../src/shared/types';
 
 const CONTENT = 'https://x.com/i/api/graphql/abc123/ArticleEntityUpdateContent';
@@ -65,19 +65,22 @@ describe('save response parsing', () => {
     expect(saveOpOf('https://x.com/home')).toBeUndefined();
   });
 
-  it('reads the first GraphQL error even on HTTP 200', () => {
-    expect(graphqlError(200, REJECTED)).toBe('BadRequest: Block count exceeds the allowed limit');
-    expect(graphqlError(200, ACCEPTED)).toBeUndefined();
-    expect(graphqlError(200, JSON.stringify({ errors: [] }))).toBeUndefined();
-    expect(graphqlError(500, 'oops')).toBe('HTTP 500');
-    expect(graphqlError(403, '{}')).toBe('HTTP 403');
-    expect(graphqlError(200, 'not json')).toBeUndefined();
+  it('only GraphQL errors in the body reject; only a data result confirms', () => {
+    expect(graphqlAnswer(200, REJECTED)).toEqual({ error: 'BadRequest: Block count exceeds the allowed limit' });
+    expect(graphqlAnswer(400, REJECTED)).toEqual({ error: 'BadRequest: Block count exceeds the allowed limit' });
+    expect(graphqlAnswer(200, ACCEPTED)).toEqual({});
+    expect(graphqlAnswer(200, JSON.stringify({ errors: [], data: {} }))).toEqual({});
+    expect(graphqlAnswer(500, 'oops')).toBeNull();
+    expect(graphqlAnswer(503, '{}')).toBeNull();
+    expect(graphqlAnswer(200, 'not json')).toBeNull();
+    expect(graphqlAnswer(200, 'null')).toBeNull();
   });
 
-  it('maps the final outcome to the run error', () => {
-    expect(saveError({ ok: true })).toBeUndefined();
-    expect(saveError({ ok: false, error: 'BadRequest' })).toBe('X 拒绝保存：BadRequest');
-    expect(saveError(null)).toBe('未确认 X 已保存');
+  it('judges the final save; unobserved traffic is a warning, not a failure', () => {
+    expect(saveVerdict({ ok: true }, 3)).toEqual({});
+    expect(saveVerdict({ ok: false, error: 'BadRequest' }, 3)).toEqual({ error: 'X 拒绝保存：BadRequest' });
+    expect(saveVerdict(null, 2)).toEqual({ error: '未确认 X 已保存' });
+    expect(saveVerdict(null, 0)).toEqual({ warning: UNOBSERVED_WARNING });
   });
 });
 
@@ -93,6 +96,34 @@ describe('watchSaves', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(calls[0]).toEqual([CONTENT, init]);
     expect(w.records).toEqual([{ op: 'content', sentAt: 0, error: 'BadRequest: Block count exceeds the allowed limit' }]);
+    expect(w.requests).toBe(1);
+    w.stop();
+  });
+
+  it('ignores aborted fetches but counts them as observed requests', async () => {
+    const { win, fetchImpl } = fakeWin();
+    fetchImpl.mockImplementationOnce(async () => {
+      throw new DOMException('The operation was aborted.', 'AbortError');
+    });
+    const w = watchSaves(win);
+    await expect(win.fetch(CONTENT, { method: 'POST' })).rejects.toThrow('aborted');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(w.records).toEqual([]);
+    expect(w.requests).toBe(1);
+    w.stop();
+  });
+
+  it('ignores XHR status 0 and HTTP errors without GraphQL errors', () => {
+    const { win } = fakeWin();
+    const w = watchSaves(win);
+    for (const [status, body] of [[0, ''], [0, REJECTED], [500, 'oops'], [502, '{}']] as const) {
+      const x = new win.XMLHttpRequest();
+      x.open('POST', CONTENT);
+      x.send('{}');
+      (FakeXHR.sent.at(-1) as FakeXHR).respond(status, body);
+    }
+    expect(w.records).toEqual([]);
+    expect(w.requests).toBe(4);
     w.stop();
   });
 
@@ -110,6 +141,7 @@ describe('watchSaves', () => {
     sent[0].respond(200, ACCEPTED);
     sent[1].respond(200, REJECTED);
     expect(w.records).toEqual([{ op: 'title', sentAt: 0, error: undefined }]);
+    expect(w.requests).toBe(1);
     w.stop();
   });
 
@@ -131,8 +163,36 @@ describe('watchSaves', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(outcome).toBe('pending');
     send(edit + SAVE_DEBOUNCE_MS + 500, REJECTED);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(SAVE_SETTLE_MS + 1);
     expect(outcome).toEqual({ ok: false, error: 'BadRequest: Block count exceeds the allowed limit' });
+    w.stop();
+  });
+
+  it('the last completed answer after the final edit wins', async () => {
+    const { win, setNow } = fakeWin();
+    const w = watchSaves(win);
+    const open = (t: number) => {
+      setNow(t);
+      const x = new win.XMLHttpRequest();
+      x.open('POST', CONTENT);
+      x.send('{}');
+      return FakeXHR.sent.at(-1) as FakeXHR;
+    };
+    const late = SAVE_DEBOUNCE_MS + 100;
+    const first = open(late);
+    const second = open(late + 50);
+    const pending = w.contentAfter(0, 20_000);
+    first.respond(200, REJECTED);
+    await vi.advanceTimersByTimeAsync(500);
+    second.respond(200, ACCEPTED);
+    await vi.advanceTimersByTimeAsync(SAVE_SETTLE_MS);
+    await expect(pending).resolves.toEqual({ ok: true });
+
+    const third = open(late + 100);
+    const again = w.contentAfter(0, 20_000);
+    third.respond(200, REJECTED);
+    await vi.advanceTimersByTimeAsync(SAVE_SETTLE_MS + 1);
+    await expect(again).resolves.toEqual({ ok: false, error: 'BadRequest: Block count exceeds the allowed limit' });
     w.stop();
   });
 
@@ -147,19 +207,9 @@ describe('watchSaves', () => {
     x.open('POST', CONTENT);
     x.send('{}');
     (FakeXHR.sent.at(-1) as FakeXHR).respond(200, ACCEPTED);
-    await expect(w.contentAfter(0, 1000)).resolves.toEqual({ ok: true });
-    w.stop();
-  });
-
-  it('counts a network failure as not saved', () => {
-    const { win, setNow } = fakeWin();
-    const w = watchSaves(win);
-    setNow(5000);
-    const x = new win.XMLHttpRequest();
-    x.open('POST', CONTENT);
-    x.send('{}');
-    (FakeXHR.sent.at(-1) as FakeXHR).respond(0, '');
-    expect(w.records[0].error).toBe('network error');
+    const ok = w.contentAfter(0, 20_000);
+    await vi.advanceTimersByTimeAsync(SAVE_SETTLE_MS + 1);
+    await expect(ok).resolves.toEqual({ ok: true });
     w.stop();
   });
 

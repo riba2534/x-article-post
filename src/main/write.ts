@@ -263,10 +263,16 @@ async function finalize(placed: Placed[], failed: Failed[], saves: SaveWatcher):
   return null;
 }
 
-/** Turns X's answer to the final save into the run's error, if any. */
-export function saveError(outcome: SaveOutcome | null): string | undefined {
-  if (!outcome) return '未确认 X 已保存';
-  return outcome.ok ? undefined : `X 拒绝保存：${outcome.error}`;
+export const UNOBSERVED_WARNING = '未能确认 X 的保存结果，请打开草稿检查';
+
+/**
+ * Judges the final save. `requests` = save requests seen during the whole write: when there
+ * were none, our wrappers did not see X's traffic at all (e.g. X kept an earlier fetch
+ * reference), so the result is unknown rather than failed.
+ */
+export function saveVerdict(outcome: SaveOutcome | null, requests: number): { error?: string; warning?: string } {
+  if (outcome) return outcome.ok ? {} : { error: `X 拒绝保存：${outcome.error}` };
+  return requests ? { error: '未确认 X 已保存' } : { warning: UNOBSERVED_WARNING };
 }
 
 export async function runWrite(req: MainWriteRequest, io: WriteIO): Promise<MainResult> {
@@ -362,7 +368,9 @@ export async function runWrite(req: MainWriteRequest, io: WriteIO): Promise<Main
     placed = placed.filter((p) => !lost.includes(p));
     for (const p of lost) await placeImage(p, markers.findIndex((m) => m.marker === p.marker));
     io.progress('cleanup', '等待 X 自动保存');
-    result.error = saveError(await finalize(placed, failed, saves));
+    const verdict = saveVerdict(await finalize(placed, failed, saves), saves.requests);
+    result.error = verdict.error;
+    if (verdict.warning) result.warnings.push(verdict.warning);
     audit();
     if (hasMarkers(editorState().getCurrentContent())) result.warnings.push('仍有占位符残留');
     result.articleId = articleIdFromUrl(location.href) ?? result.articleId;
