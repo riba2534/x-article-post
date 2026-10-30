@@ -16,8 +16,9 @@
     "test:watch": "vitest",
     "bridge": "node bridge/xap.mjs serve",
     "package": "node scripts/build.mjs && node scripts/package.mjs",
-    "check": "npm run typecheck && npm test && npm run build && npm run build:bridge",
-    "build:bridge": "node scripts/build-bridge.mjs"
+    "check": "npm run typecheck && npm test && npm run build && npm run check:sw && npm run build:bridge",
+    "build:bridge": "node scripts/build-bridge.mjs",
+    "check:sw": "node scripts/check-sw.mjs dist/background.js"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
