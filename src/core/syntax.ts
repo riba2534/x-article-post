@@ -82,7 +82,6 @@ function createMathTokenizer(kind: 'tex' | 'dollar') {
     const escaped: State = (code) => {
       if (code === null) return nok(code);
       if (kind === 'tex' && code === close && size > 0) return finish(code);
-      if (isLineEnding(code)) return inside(code);
       take(code);
       size++;
       return inside;

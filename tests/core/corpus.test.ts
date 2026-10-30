@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { convertMarkdown } from '../../src/core';
-import type { ArticleDoc } from '../../src/shared/types';
+import { ARTICLE_BLOCK_LIMIT, ARTICLE_MEDIA_LIMIT, type ArticleDoc } from '../../src/shared/types';
 
 const BLOG_DIR = process.env.BLOG_DIR;
 
@@ -47,7 +47,7 @@ function outputText(doc: ArticleDoc): string {
 
 /** $$ formulas in the source outside fenced code and code spans. */
 function dollarFormulas(md: string): string[] {
-  const prose = md.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '').replace(/(`+)[^`]*?\1/g, '');
+  const prose = sourceText(md).replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '').replace(/(`+)[^`]*?\1/g, '');
   return [...prose.matchAll(/\$\$([\s\S]+?)\$\$/g)].map((m) => m[1].trim());
 }
 
@@ -81,6 +81,7 @@ describe.skipIf(!BLOG_DIR)('blog corpus', () => {
     expect(files.length).toBeGreaterThan(0);
     const residues: string[] = [];
     const lostFormulas: string[] = [];
+    const overLimit: string[] = [];
     let formulas = 0;
     let invalid = 0;
     const retention: { file: string; ratio: number; missing: number }[] = [];
@@ -100,6 +101,9 @@ describe.skipIf(!BLOG_DIR)('blog corpus', () => {
           if (re.test(text)) residues.push(`${rel}: ${name}: ${JSON.stringify(block.text.slice(0, 120))}`);
         }
       }
+
+      const images = doc.blocks.filter((b) => b.kind === 'image').length;
+      if (doc.blocks.length > ARTICLE_BLOCK_LIMIT || images > ARTICLE_MEDIA_LIMIT) overLimit.push(`${rel}: ${doc.blocks.length} blocks, ${images} images`);
 
       const tex = outputFormulas(doc);
       invalid += doc.warnings.filter((w) => w.code === 'latex-invalid').length;
@@ -127,6 +131,7 @@ describe.skipIf(!BLOG_DIR)('blog corpus', () => {
     console.log(`corpus: ${formulas} $$ formulas, ${invalid} latex-invalid`);
     expect(residues).toEqual([]);
     expect(lostFormulas).toEqual([]);
+    expect(overLimit).toEqual([]);
     expect(retention.filter((r) => r.ratio < 0.98)).toEqual([]);
   });
 });

@@ -7,7 +7,6 @@ import {
   type ArticleDoc,
   type Block,
   type ConvertOptions,
-  type ConvertStats,
   type ImageBlock,
   type InlineStyle,
   type TextBlockType,
@@ -18,6 +17,7 @@ import { decodeEntities, RAW_TEXT_TAGS, tokenizeHtml, type HtmlToken } from './h
 import { normalizeLanguage } from './lang';
 import { texToUnicode, toScript } from './math-unicode';
 import { parseMarkdown, type MdNode } from './parse';
+import { computeStats, fitLimits } from './limits';
 import { TextBuilder } from './text';
 
 interface Env {
@@ -194,7 +194,7 @@ class Converter {
     this.flow(children, ROOT_ENV);
     this.footnotes();
 
-    const doc: ArticleDoc = { title, blocks: this.blocks, warnings: this.warnings.list, stats: this.stats() };
+    const doc: ArticleDoc = { title, blocks: this.blocks, warnings: this.warnings.list, stats: computeStats(this.blocks) };
     if (meta.cover) doc.cover = meta.cover;
     if (meta.description) doc.description = meta.description;
     return doc;
@@ -260,35 +260,6 @@ class Converter {
       this.footnoteIndex.set(id, index);
     }
     return index + 1;
-  }
-
-  private stats(): ConvertStats {
-    const stats: ConvertStats = { blocks: this.blocks.length, images: 0, mermaid: 0, codeBlocks: 0, tables: 0, latex: 0, tweets: 0, characters: 0 };
-    for (const block of this.blocks) {
-      switch (block.kind) {
-        case 'text':
-          stats.characters += block.text.length;
-          break;
-        case 'markdown':
-          stats.characters += block.markdown.length;
-          if (block.role === 'code') stats.codeBlocks++;
-          if (block.role === 'table') stats.tables++;
-          break;
-        case 'latex':
-          stats.characters += block.tex.length;
-          stats.latex++;
-          break;
-        case 'tweet':
-          stats.tweets++;
-          break;
-        case 'image':
-          if (block.source.type === 'url') stats.images++;
-          else if (block.source.type === 'mermaid') stats.mermaid++;
-          else stats.tables++;
-          break;
-      }
-    }
-    return stats;
   }
 
   // -------------------------------------------------------------------------
@@ -963,5 +934,5 @@ class Converter {
 }
 
 export function convertMarkdown(markdown: string, options: Partial<ConvertOptions> = {}): ArticleDoc {
-  return new Converter(markdown.replace(/\r\n?/g, '\n'), options).run();
+  return fitLimits(new Converter(markdown.replace(/\r\n?/g, '\n'), options).run());
 }
