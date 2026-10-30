@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { MARKDOWN_BLOCK_LIMIT, type ImageBlock, type LatexBlock, type MarkdownBlock, type TweetBlock } from '../../src/shared/types';
+import { extractDisplayMath } from '../../src/core/math-block';
 import { blocks, codes, convert, linked, shape, styled, text, textBlocks } from './helpers';
 
 describe('front matter and title', () => {
@@ -310,6 +311,54 @@ describe('math', () => {
       { kind: 'latex', tex: 'E=mc^2' },
     ]);
     expect(doc.warnings).toEqual([]);
+  });
+
+  it.each([
+    ['list-like line', '$$\na\n- b\n$$', 'a\n- b'],
+    ['plus continuation', '$$\\begin{aligned}\nx &= a\n+ c\n\\end{aligned}$$', '\\begin{aligned}\nx &= a\n+ c\n\\end{aligned}'],
+    ['star, ordered and quote lines', '$$\n* x\n1. z\n> w\n$$', '* x\n1. z\n> w'],
+    ['blank line', '$$\na\n\nb\n$$', 'a\n\nb'],
+    ['indented opener', '   $$x^2$$', 'x^2'],
+    ['\\[ with list line', '\\[\na\n- b\n\\]', 'a\n- b'],
+  ])('parses display math at block level: %s', (_name, md, tex) => {
+    expect(blocks(`前\n\n${md}\n\n后`)).toEqual([
+      { kind: 'text', type: 'unstyled', text: '前', styles: [], links: [] },
+      { kind: 'latex', tex },
+      { kind: 'text', type: 'unstyled', text: '后', styles: [], links: [] },
+    ]);
+  });
+
+  it('parses display math inside quotes and list items', () => {
+    expect(shape(blocks('> 引用\n> $$\n> a\n> - b\n> $$\n\n- 项\n\n  $$\n  a\n\n  + b\n  $$\n- 下一项'))).toEqual([
+      'blockquote:引用',
+      'latex',
+      'unordered-list-item:项',
+      'latex',
+      'unordered-list-item:下一项',
+    ]);
+    const tex = blocks('> $$\n> a\n> - b\n> $$').map((b) => (b.kind === 'latex' ? b.tex : ''));
+    expect(tex).toEqual(['a\n- b']);
+  });
+
+  it('keeps line numbers after a multi-line formula', () => {
+    const doc = convert('$$\na\n\nb\n$$\n\n[x](#y)');
+    expect(doc.warnings[0]).toMatchObject({ code: 'anchor-link', line: 7 });
+  });
+
+  it('leaves unclosed or mid-line-closed $$ blocks to inline parsing', () => {
+    expect(shape(blocks('$$\na\n\nb'))).toEqual(['unstyled:$$ a', 'unstyled:b']);
+    expect(shape(blocks('$$x$$ 后面有字'))).toEqual(['latex', 'unstyled:后面有字']);
+  });
+
+  it('scans pathological lines in linear time', () => {
+    const md = [' '.repeat(5000) + 'x', '-  '.repeat(2000) + 'x', '> '.repeat(2000) + 'x', '1.  '.repeat(1000) + 'x'].join('\n\n');
+    const start = performance.now();
+    expect(extractDisplayMath(md).formulas).toEqual([]);
+    expect(performance.now() - start).toBeLessThan(200);
+  });
+
+  it('does not open display math inside fenced code', () => {
+    expect(shape(blocks('```\n$$\n- a\n$$\n```\n\n~~~tex\n\\[\nx\n\\]\n~~~'))).toEqual(['md-code', 'md-code']);
   });
 
   it('keeps \\[ \\] content on the delimiter lines', () => {
