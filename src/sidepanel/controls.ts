@@ -76,8 +76,9 @@ export function row(label: string, control: Node, hint?: string): HTMLElement {
   return h('div', { class: 'row' }, h('div', { class: 'row-text' }, h('div', { class: 'row-label' }, label), hint ? h('div', { class: 'row-hint' }, hint) : null), control);
 }
 
-export function field(label: string, input: HTMLInputElement, hint?: string): HTMLElement {
+/** `control` defaults to the input; pass a wrapper (e.g. input + button) to render that instead. */
+export function field(label: string, input: HTMLInputElement, hint?: string, control: Node = input): HTMLElement {
   const id = `f-${Math.random().toString(36).slice(2, 8)}`;
   input.id = id;
-  return h('div', { class: 'field' }, h('label', { for: id, class: 'row-label' }, label), input, hint ? h('div', { class: 'row-hint' }, hint) : null);
+  return h('div', { class: 'field' }, h('label', { for: id, class: 'row-label' }, label), control, hint ? h('div', { class: 'row-hint' }, hint) : null);
 }

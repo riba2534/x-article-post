@@ -399,6 +399,13 @@ select {
 .btn-secondary:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.09);
 }
+.sheet .btn-secondary {
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+.sheet .btn-secondary:hover:not(:disabled) {
+  background: #fafafa;
+}
 .btn-danger {
   background: var(--error);
   color: #fff;
@@ -584,7 +591,7 @@ select {
 .sheet-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.22);
+  background: rgba(0, 0, 0, 0.32);
   animation: fade 0.2s var(--ease);
 }
 
@@ -879,6 +886,7 @@ select {
 
 .result-notes {
   width: 100%;
+  margin-top: 4px;
   text-align: left;
   font-size: 13px;
 }
@@ -1171,8 +1179,8 @@ select {
 .x-badge {
   position: absolute;
   z-index: 1;
-  top: 6px;
-  right: 6px;
+  top: 8px;
+  right: 8px;
   padding: 1px 8px;
   border-radius: 980px;
   background: rgba(255, 255, 255, 0.92);
@@ -1191,15 +1199,13 @@ select {
   padding: 18px 0 4px;
 }
 
-@media (max-width: 400px) {
+/* Narrow panels: the agent capsule keeps its icon (and aria-label), the text goes. */
+@media (max-width: 440px) {
   .capsule-agent .capsule-text {
     display: none;
   }
   .capsule-agent {
     padding: 0 8px;
-  }
-  .brand-name {
-    display: none;
   }
 }
 

@@ -109,8 +109,7 @@ export function openSettings(ctx: SettingsContext): { updateStatus(status: Exten
     reveal.setAttribute('aria-pressed', String(show));
     reveal.setAttribute('aria-label', show ? '隐藏配对令牌' : '显示配对令牌');
   });
-  const tokenField = field('配对令牌', tokenInput);
-  tokenInput.replaceWith(h('div', { class: 'input-group' }, tokenInput, reveal));
+  const tokenField = field('配对令牌', tokenInput, undefined, h('div', { class: 'input-group' }, tokenInput, reveal));
 
   const stateDot = h('span', { class: 'dot' });
   const stateText = h('span');

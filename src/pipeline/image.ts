@@ -81,15 +81,19 @@ function withSize(svg: string, width: number, height: number): string {
   return new XMLSerializer().serializeToString(doc);
 }
 
-function loadImageElement(blob: Blob): Promise<HTMLImageElement> {
-  const url = URL.createObjectURL(blob);
+function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
     img.decoding = 'async';
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('图片无法解码'));
-    img.src = url;
-  }).finally(() => URL.revokeObjectURL(url));
+    img.src = src;
+  });
+}
+
+function loadImageElement(blob: Blob): Promise<HTMLImageElement> {
+  const url = URL.createObjectURL(blob);
+  return loadImage(url).finally(() => URL.revokeObjectURL(url));
 }
 
 type Drawable = CanvasImageSource & { width: number; height: number };
@@ -155,7 +159,8 @@ export async function svgToPng(svg: string, opts: SvgRasterOptions = {}): Promis
   const scale = opts.scale ?? 1;
   const base = svgIntrinsicSize(svg);
   const target = fitWithin(Math.round(base.width * scale), Math.round(base.height * scale), MAX_IMAGE_SIDE);
-  const img = await loadImageElement(new Blob([withSize(svg, target.width, target.height)], { type: 'image/svg+xml' }));
+  // A data: URL (not a blob: URL) keeps Chrome from tainting the canvas when the SVG has foreignObject.
+  const img = await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(withSize(svg, target.width, target.height))}`);
   return encodeWithinLimits(img, target.width, target.height, true, opts.background);
 }
 
