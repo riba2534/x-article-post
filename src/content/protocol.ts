@@ -60,6 +60,8 @@ export type ToMain =
 /** MAIN -> content. */
 export type FromMain =
   | { kind: 'hello' }
+  /** Sent periodically while a call runs, so the content script can detect a dead MAIN. */
+  | { kind: 'beat' }
   | { kind: 'reply'; id: number; ok: true; value: unknown }
   | { kind: 'reply'; id: number; ok: false; error: string }
   | { kind: 'progress'; progress: WriteProgress }
