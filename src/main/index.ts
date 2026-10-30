@@ -1,18 +1,15 @@
 // MAIN-world script on x.com (Draft.js access). Talks only to the content script over a
 // MessageChannel; messages without the handshake token are ignored. Nothing is exposed globally.
 import type { PreparedImage, WritePhase } from '../shared/types';
-import { CONNECT_SOURCE, MAIN_READY_SOURCE, articleIdFromUrl, type EditorStatus, type FromMain, type MainCall, type ToMain } from '../content/protocol';
+import { articleIdFromUrl, type EditorStatus, type MainCall, type FromMain } from '../content/protocol';
 import { findDraftNode } from './dom';
+import { installMainLink } from './link';
 import { runWrite } from './write';
-import { errorMessage } from '../content/util';
 
 const IMAGE_TIMEOUT_MS = 60_000;
 
-let port: MessagePort | null = null;
-let token = '';
-let job: { cancelled: boolean; images: Map<string, { resolve(i: PreparedImage): void; reject(e: Error): void }> } | null = null;
-
-const send = (msg: FromMain): void => port?.postMessage(msg);
+type Job = { cancelled: boolean; images: Map<string, { resolve(i: PreparedImage): void; reject(e: Error): void }> };
+let job: Job | null = null;
 
 function state(): EditorStatus {
   return {
@@ -29,10 +26,10 @@ function cancel(): void {
   job.images.clear();
 }
 
-async function call(c: MainCall): Promise<unknown> {
+async function call(c: MainCall, send: (msg: FromMain) => void): Promise<unknown> {
   if (c.method === 'state') return state();
   if (job) throw new Error('busy');
-  const current = (job = { cancelled: false, images: new Map() });
+  const current: Job = (job = { cancelled: false, images: new Map() });
   try {
     return await runWrite(c.request, {
       isCancelled: () => current.cancelled,
@@ -59,33 +56,13 @@ async function call(c: MainCall): Promise<unknown> {
   }
 }
 
-function onPortMessage(ev: MessageEvent<ToMain>): void {
-  const msg = ev.data;
-  if (!msg || msg.token !== token) return;
-  if (msg.kind === 'cancel') return cancel();
-  if (msg.kind === 'image') {
+installMainLink(window, {
+  call,
+  cancel,
+  image: (msg) => {
     const pending = job?.images.get(msg.imageId);
     if (!pending) return;
     if (msg.image) pending.resolve(msg.image);
     else pending.reject(new Error(msg.error || '图片数据缺失'));
-    return;
-  }
-  call(msg.call).then(
-    (value) => send({ kind: 'reply', id: msg.id, ok: true, value }),
-    (e: unknown) => send({ kind: 'reply', id: msg.id, ok: false, error: errorMessage(e) }),
-  );
-}
-
-window.addEventListener('message', (ev: MessageEvent) => {
-  const d = ev.data;
-  if (ev.source !== window || ev.origin !== location.origin || d?.source !== CONNECT_SOURCE || d.type !== 'connect') return;
-  if (typeof d.token !== 'string' || d.token.length < 16 || !ev.ports[0]) return;
-  // The newest content script wins (e.g. after an extension reload).
-  port?.close();
-  port = ev.ports[0];
-  token = d.token;
-  port.onmessage = onPortMessage;
-  send({ kind: 'hello' });
+  },
 });
-
-window.postMessage({ source: MAIN_READY_SOURCE, type: 'ready' }, location.origin);
