@@ -26,6 +26,11 @@ const OPS: Record<string, SaveOp> = {
   ArticleEntityUpdateCoverMedia: 'cover',
 };
 
+/** X's media upload FINALIZE step: after it answers, X inserts the image within about a second. */
+export function isUploadFinalize(url: string): boolean {
+  return /\/media\/upload\.json\b/.test(url) && /[?&]command=FINALIZE\b/.test(url);
+}
+
 export function saveOpOf(url: string): SaveOp | undefined {
   const name = /\/graphql\/[^/]+\/(ArticleEntityUpdate\w+)/.exec(url)?.[1];
   return name ? OPS[name] : undefined;
@@ -62,7 +67,9 @@ export interface SaveWatcher {
    * X's last answer to a content save sent at least SAVE_DEBOUNCE_MS after `since`
    * (performance.now()), i.e. one carrying the edit made at `since`; null when none came in time.
    */
-  contentAfter(since: number, timeoutMs: number): Promise<SaveOutcome | null>;
+  contentAfter(since: number, timeoutMs: number, settleMs?: number): Promise<SaveOutcome | null>;
+  /** performance.now() of the first media upload X finished (FINALIZE answered) at or after `since`. */
+  uploadFinishedAfter(since: number): number | undefined;
   stop(): void;
 }
 
@@ -71,6 +78,7 @@ const urlOf = (input: RequestInfo | URL): string =>
 
 export function watchSaves(win: SaveWin): SaveWatcher {
   const records: SaveRecord[] = [];
+  const finalized: number[] = [];
   let requests = 0;
   const waiters = new Set<() => void>();
   const answer = (op: SaveOp, sentAt: number, a: { error?: string } | null) => {
@@ -81,9 +89,11 @@ export function watchSaves(win: SaveWin): SaveWatcher {
 
   const origFetch = win.fetch;
   const wrappedFetch = function (this: unknown, input: RequestInfo | URL, init?: RequestInit) {
-    const op = saveOpOf(urlOf(input));
+    const url = urlOf(input);
+    const op = saveOpOf(url);
     const sentAt = win.performance.now();
     const pending = origFetch.call(this, input, init);
+    if (isUploadFinalize(url)) pending.then((res) => res.ok && finalized.push(win.performance.now())).catch(() => {});
     if (op) {
       requests++;
       // A rejected fetch (AbortError, network failure) is no answer from X: ignore it.
@@ -97,13 +107,21 @@ export function watchSaves(win: SaveWin): SaveWatcher {
   const origOpen = proto.open;
   const origSend = proto.send;
   const opOf = new WeakMap<XMLHttpRequest, SaveOp>();
+  const finalizes = new WeakSet<XMLHttpRequest>();
   const wrappedOpen = function (this: XMLHttpRequest, ...args: unknown[]) {
+    if (isUploadFinalize(String(args[1]))) finalizes.add(this);
+    else finalizes.delete(this);
     const op = saveOpOf(String(args[1]));
     if (op) opOf.set(this, op);
     else opOf.delete(this);
     return (origOpen as (...a: unknown[]) => void).apply(this, args);
   };
   const wrappedSend = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
+    if (finalizes.has(this)) {
+      this.addEventListener('loadend', () => {
+        if (this.status >= 200 && this.status < 300) finalized.push(win.performance.now());
+      });
+    }
     const op = opOf.get(this);
     if (op) {
       requests++;
@@ -128,7 +146,7 @@ export function watchSaves(win: SaveWin): SaveWatcher {
     get requests() {
       return requests;
     },
-    contentAfter(since, timeoutMs) {
+    contentAfter(since, timeoutMs, settleMs = SAVE_SETTLE_MS) {
       const matching = () => records.filter((r) => r.op === 'content' && r.sentAt >= since + SAVE_DEBOUNCE_MS);
       return new Promise((resolve) => {
         let settle: ReturnType<typeof setTimeout> | undefined;
@@ -140,12 +158,15 @@ export function watchSaves(win: SaveWin): SaveWatcher {
           resolve(last ? (last.error ? { ok: false, error: last.error } : { ok: true }) : null);
         };
         const check = () => {
-          if (!settle && matching().length) settle = setTimeout(finish, SAVE_SETTLE_MS);
+          if (!settle && matching().length) settle = setTimeout(finish, settleMs);
         };
         const timer = setTimeout(finish, timeoutMs);
         waiters.add(check);
         check();
       });
+    },
+    uploadFinishedAfter(since) {
+      return finalized.find((t) => t >= since);
     },
     stop() {
       if (win.fetch === wrappedFetch) win.fetch = origFetch;

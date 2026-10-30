@@ -18,7 +18,7 @@ import {
   type ImageMarker,
 } from './draft';
 import { findDraftNode, findEditor, findOnFilesAdded, setCover, setTitle } from './dom';
-import { watchSaves, type SaveOutcome, type SaveWatcher } from './saves';
+import { SAVE_DEBOUNCE_MS, watchSaves, type SaveOutcome, type SaveWatcher } from './saves';
 
 export class Cancelled extends Error {
   constructor() {
@@ -36,8 +36,11 @@ const UPLOAD_TIMEOUT_MS = 120_000;
 const UPLOAD_ATTEMPTS = 3;
 const HEARTBEAT_MS = 10_000;
 const SAVE_TIMEOUT_MS = 20_000;
-const STICK_MS = 1500;
+/** How long one upload waits for X to answer the save that carries it before moving on. */
+const UPLOAD_SAVE_TIMEOUT_MS = 15_000;
 const CANCEL_GRACE_MS = 15_000;
+/** X inserts a finished upload within about a second; past this the insert was lost. */
+const LOST_INSERT_MS = 8000;
 
 // X updates `props.editorState` (Redux) without refreshing the Draft instance's
 // `_latestEditorState`, which Draft's focus/blur/select handlers push back via onChange. Live
@@ -135,7 +138,7 @@ function toFile(img: PreparedImage): File {
 }
 
 /** One upload through X's onFilesAdded, then moves the MEDIA block onto the placeholder. */
-async function uploadOnce(marker: string, file: File, io: WriteIO, onWait: (s: number) => void): Promise<{ entityKey: string } | null> {
+async function uploadOnce(marker: string, file: File, io: WriteIO, saves: SaveWatcher, onWait: (s: number) => void): Promise<{ entityKey: string } | null> {
   const markerKey = await waitFor(() => findMarkerBlock(editorState().getCurrentContent(), marker), 3000, io);
   if (!markerKey) throw new Error('图片占位符丢失');
   const before = new Set(listMedia(editorState().getCurrentContent()).keys());
@@ -147,6 +150,7 @@ async function uploadOnce(marker: string, file: File, io: WriteIO, onWait: (s: n
   upload([file]);
 
   const started = Date.now();
+  const startedPerf = performance.now();
   let seen: string | undefined;
   const fresh = () => [...listMedia(editorState().getCurrentContent())].find(([key]) => !before.has(key));
   const dropSeen = () => {
@@ -168,15 +172,16 @@ async function uploadOnce(marker: string, file: File, io: WriteIO, onWait: (s: n
     const [entityKey, info] = fresh() ?? [];
     if (entityKey && info) {
       seen = entityKey;
-      if (info.mediaId) {
-        await sleep(300); // let X finish its own follow-up update
-        settle([{ marker, entityKey }], []);
-        // X sometimes drops a freshly inserted image a moment later; then this attempt failed.
-        await sleep(STICK_MS);
-        return listMedia(editorState().getCurrentContent()).has(entityKey) ? { entityKey } : null;
-      }
+      // Placement waits until every upload is in: editing the content while X's save of a fresh
+      // upload is in flight makes X revert the edit or upload the image again (live tests).
+      if (info.mediaId) return { entityKey };
     } else if (seen) {
       return null; // X dropped the pending block: upload failed
+    } else {
+      // X finished the upload but never inserted the image (seen live): retry instead of waiting
+      // for the full upload timeout.
+      const finishedAt = saves.uploadFinishedAfter(startedPerf);
+      if (finishedAt !== undefined && performance.now() - finishedAt > LOST_INSERT_MS) return null;
     }
     if (Date.now() - lastBeat >= HEARTBEAT_MS) {
       lastBeat = Date.now();
@@ -188,12 +193,12 @@ async function uploadOnce(marker: string, file: File, io: WriteIO, onWait: (s: n
   return null;
 }
 
-async function uploadImage(m: ImageMarker, index: number, total: number, io: WriteIO): Promise<{ entityKey: string } | null> {
+async function uploadImage(m: ImageMarker, index: number, total: number, io: WriteIO, saves: SaveWatcher): Promise<{ entityKey: string } | null> {
   const label = `图片 ${index + 1}/${total}`;
   const file = toFile(await io.getImage(m.imageId));
   for (let attempt = 1; attempt <= UPLOAD_ATTEMPTS; attempt++) {
     io.progress('image', attempt === 1 ? `上传${label}` : `重试${label}（第 ${attempt} 次）`, index + 1, total);
-    const done = await uploadOnce(m.marker, file, io, (s) => io.progress('image', `等待${label}上传（${s} s）`, index + 1, total));
+    const done = await uploadOnce(m.marker, file, io, saves, (s) => io.progress('image', `等待${label}上传（${s} s）`, index + 1, total));
     if (done) return done;
   }
   return null;
@@ -332,9 +337,14 @@ export async function runWrite(req: MainWriteRequest, io: WriteIO): Promise<Main
     const placeImage = async (m: ImageMarker, index: number): Promise<void> => {
       let error = '上传失败或超时';
       try {
-        const done = await uploadImage(m, index, markers.length, io);
+        const done = await uploadImage(m, index, markers.length, io, saves);
         if (done) {
+          const uploadedAt = performance.now();
           placed.push({ ...m, entityKey: done.entityKey });
+          // Any content change before X has saved a fresh upload makes X upload that image again
+          // (live tests: 51 uploads for 21 images without this wait, 22 with it), so the next
+          // image waits for X's answer to the save that carries this one.
+          await saves.contentAfter(uploadedAt - SAVE_DEBOUNCE_MS, UPLOAD_SAVE_TIMEOUT_MS, 0);
           return;
         }
       } catch (e) {

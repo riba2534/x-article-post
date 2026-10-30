@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SAVE_DEBOUNCE_MS, SAVE_SETTLE_MS, graphqlAnswer, saveOpOf, watchSaves } from '../../src/main/saves';
+import { SAVE_DEBOUNCE_MS, SAVE_SETTLE_MS, graphqlAnswer, isUploadFinalize, saveOpOf, watchSaves } from '../../src/main/saves';
 import { UNOBSERVED_WARNING, runWrite, saveVerdict } from '../../src/main/write';
 import { ARTICLE_BLOCK_LIMIT, type WriteBlock } from '../../src/shared/types';
 
@@ -165,6 +165,42 @@ describe('watchSaves', () => {
     send(edit + SAVE_DEBOUNCE_MS + 500, REJECTED);
     await vi.advanceTimersByTimeAsync(SAVE_SETTLE_MS + 1);
     expect(outcome).toEqual({ ok: false, error: 'BadRequest: Block count exceeds the allowed limit' });
+    w.stop();
+  });
+
+  it('contentAfter with settleMs 0 resolves on the first answer carrying the edit', async () => {
+    const { win, setNow } = fakeWin();
+    const w = watchSaves(win);
+    setNow(SAVE_DEBOUNCE_MS + 100);
+    const x = new win.XMLHttpRequest();
+    x.open('POST', CONTENT);
+    x.send('{}');
+    let outcome: unknown = 'pending';
+    void w.contentAfter(0, 20_000, 0).then((o) => (outcome = o));
+    (FakeXHR.sent.at(-1) as FakeXHR).respond(200, ACCEPTED);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(outcome).toEqual({ ok: true });
+    w.stop();
+  });
+
+  it('records when X finishes a media upload (FINALIZE), and only successful ones', () => {
+    const { win, setNow } = fakeWin();
+    const w = watchSaves(win);
+    const finalize = (t: number, status: number) => {
+      setNow(t);
+      const x = new win.XMLHttpRequest();
+      x.open('POST', 'https://upload.x.com/i/media/upload.json?command=FINALIZE&media_id=1');
+      x.send('');
+      (FakeXHR.sent.at(-1) as FakeXHR).respond(status, '{}');
+    };
+    finalize(100, 500);
+    expect(w.uploadFinishedAfter(0)).toBeUndefined();
+    finalize(200, 200);
+    finalize(300, 200);
+    expect(w.uploadFinishedAfter(0)).toBe(200);
+    expect(w.uploadFinishedAfter(250)).toBe(300);
+    expect(w.uploadFinishedAfter(400)).toBeUndefined();
+    expect(isUploadFinalize('https://upload.x.com/i/media/upload.json?command=APPEND')).toBe(false);
     w.stop();
   });
 
