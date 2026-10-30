@@ -55,6 +55,11 @@ export function isPrivateHost(hostname: string): boolean {
   return /^f[cd]/.test(h) || /^fe[89ab]/.test(h);
 }
 
+/** http(s) to a public host. Hostname checks cannot see DNS answers (e.g. *.nip.io or rebinding to a LAN IP). */
+export function isPublicHttpUrl(url: URL): boolean {
+  return (url.protocol === 'http:' || url.protocol === 'https:') && !isPrivateHost(url.hostname);
+}
+
 const TOO_LARGE = '图片超过 20 MB';
 
 async function readLimited(res: Response, maxBytes: number): Promise<Uint8Array> {
@@ -90,7 +95,7 @@ export async function fetchImageBytes(url: string, opts: FetchOptions = {}): Pro
   const parsed = new URL(url);
   if (!['http:', 'https:', 'data:'].includes(parsed.protocol)) throw new Error(`不支持的图片地址：${parsed.protocol}`);
   // Refuse before any request is made: Markdown from an agent must not reach LAN services.
-  if (parsed.protocol !== 'data:' && isPrivateHost(parsed.hostname)) throw new Error('图片地址指向内网或本机，已跳过');
+  if (parsed.protocol !== 'data:' && !isPublicHttpUrl(parsed)) throw new Error('图片地址指向内网或本机，已跳过');
   const ctrl = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -106,7 +111,7 @@ export async function fetchImageBytes(url: string, opts: FetchOptions = {}): Pro
     });
     // Extension pages cannot read Location with redirect:'manual', so the final URL is checked
     // before the body is read.
-    if (res.redirected && parsed.protocol !== 'data:' && isPrivateHost(new URL(res.url).hostname)) {
+    if (res.redirected && !isPublicHttpUrl(new URL(res.url))) {
       ctrl.abort();
       throw new Error('图片地址重定向到了内网地址');
     }

@@ -116,7 +116,7 @@ export type TargetMode = 'new' | 'append' | 'replace';
  * so retrying never leaves a second, half-written draft behind.
  */
 export function retryTarget(original: WriteTarget, result: Pick<WriteResult, 'articleId'>): WriteTarget {
-  return original.type === 'new' && result.articleId ? { type: 'existing', articleId: result.articleId, mode: 'replace' } : original;
+  return original.type === 'new' && result.articleId ? buildTarget('replace', result.articleId)! : original;
 }
 
 export function buildTarget(mode: TargetMode, articleId: string | undefined): WriteTarget | null {

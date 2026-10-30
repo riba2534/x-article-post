@@ -423,7 +423,7 @@ function finishRun(run: Run, result: WriteResult) {
   run.view.showResult(result, {
     imagesTotal: run.imagesTotal,
     prepareWarnings: run.prepareWarnings,
-    retryReplacesDraft: retry !== run.target,
+    draftHint: retry !== run.target ? '已创建的草稿里可能有部分内容，重试将覆盖刚才创建的草稿。' : result.articleId ? '部分内容可能已写入草稿，可在 X 上查看。' : undefined,
     onOpen: openDraft,
     onRetry: () => startRun(retry),
   });

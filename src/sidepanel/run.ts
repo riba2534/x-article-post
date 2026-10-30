@@ -13,8 +13,8 @@ export interface RunView {
 export interface ResultActions {
   imagesTotal: number;
   prepareWarnings: string[];
-  /** Retry writes into the draft this run already created instead of making another. */
-  retryReplacesDraft: boolean;
+  /** Shown on failure: what is in the draft and what retry will do to it. */
+  draftHint?: string;
   onOpen(url: string, articleId?: string): void;
   onRetry(): void;
 }
@@ -95,11 +95,7 @@ export function openRunView(onCancel: () => void): RunView {
             { class: `result ${cancelled ? 'result-muted' : 'result-error'}`, role: 'alert' },
             h('div', { class: 'result-icon' }, icon(cancelled ? 'close' : 'error', 40)),
             h('p', { class: 'result-lead' }, errorText(result.error)),
-            actions.retryReplacesDraft
-              ? h('p', { class: 'row-hint' }, '已创建的草稿里可能有部分内容，重试将覆盖刚才创建的草稿。')
-              : result.articleId
-                ? h('p', { class: 'row-hint' }, '部分内容可能已写入草稿，可在 X 上查看。')
-                : null,
+            actions.draftHint ? h('p', { class: 'row-hint' }, actions.draftHint) : null,
             h(
               'div',
               { class: 'result-actions' },

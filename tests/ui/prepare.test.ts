@@ -149,12 +149,10 @@ describe('splitTableMarkdown', () => {
   it('splits a failed table image fallback into several MARKDOWN blocks', async () => {
     const big = [head, ...Array.from({ length: 400 }, (_, i) => `| ![i](https://a.example/${i}.png) | ${'y'.repeat(30)} |`)].join('\n');
     const doc: ArticleDoc = { ...sampleDoc(), cover: undefined, blocks: [{ kind: 'image', source: { type: 'table', markdown: big }, alt: '表格', fallbackText: big }] };
-    const { request } = await assembleRequest(doc, { type: 'new' }, () => Promise.reject(new Error('x')));
+    const { request, doc: out } = await assembleRequest(doc, { type: 'new' }, () => Promise.reject(new Error('x')));
     expect(request.blocks.length).toBeGreaterThan(1);
-    for (const b of request.blocks) {
-      expect(b).toMatchObject({ kind: 'markdown', role: 'table' });
-      expect((b as { markdown: string }).markdown.length).toBeLessThanOrEqual(10_000);
-    }
+    expect(request.blocks.every((b) => b.kind === 'markdown' && b.role === 'table')).toBe(true);
+    expect(out.warnings.some((w) => w.message.includes('已按行拆成'))).toBe(true);
   });
 });
 

@@ -63,18 +63,8 @@ describe('fetchImageBytes', () => {
     await expect(fetchImageBytes('https://a.example/x.png', { fetchImpl })).resolves.toBeTruthy();
   });
 
-  it.each([
-    'http://127.0.0.1/a.png',
-    'http://2130706433/a.png',
-    'http://0x7f.1/a.png',
-    'http://[::ffff:127.0.0.1]/a.png',
-    'http://[::1]:8080/a.png',
-    'http://192.168.1.1/a.png',
-    'http://169.254.169.254/latest/meta-data',
-    'http://localhost:3000/a.png',
-    'http://printer.local/a.png',
-    'http://router/a.png',
-  ])('refuses %s without sending a request', async (url) => {
+  // isPrivateHost has the full host matrix; this only checks no request is sent.
+  it.each(['http://2130706433/a.png', 'http://[::ffff:127.0.0.1]/a.png', 'http://169.254.169.254/latest/meta-data'])('refuses %s without sending a request', async (url) => {
     const fetchImpl = vi.fn();
     await expect(fetchImageBytes(url, { fetchImpl })).rejects.toThrow('内网');
     expect(fetchImpl).not.toHaveBeenCalled();
