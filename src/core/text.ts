@@ -142,7 +142,7 @@ function mergeRanges(ranges: StyleRange[]): StyleRange[] {
 }
 
 /** Prefix a finished block's text, shifting its ranges. */
-function prefixBlock(block: TextBlock, prefix: string): TextBlock {
+export function prefixBlock(block: TextBlock, prefix: string): TextBlock {
   if (!prefix) return block;
   const shift = <T extends { offset: number }>(r: T): T => ({ ...r, offset: r.offset + prefix.length });
   return { ...block, text: prefix + block.text, styles: block.styles.map(shift), links: block.links.map(shift) };

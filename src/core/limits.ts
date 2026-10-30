@@ -11,6 +11,7 @@ import {
   type TextBlock,
   type Warning,
 } from '../shared/types';
+import { prefixBlock } from './text';
 
 export function computeStats(blocks: Block[]): ConvertStats {
   const stats: ConvertStats = { blocks: blocks.length, images: 0, mermaid: 0, codeBlocks: 0, tables: 0, latex: 0, tweets: 0, characters: 0 };
@@ -49,12 +50,10 @@ function isText(block: Block | undefined, type: TextBlock['type']): block is Tex
 function joinText(parts: TextBlock[], separator: string, prefix: (i: number) => string = () => ''): TextBlock {
   const out: TextBlock = { kind: 'text', type: 'unstyled', text: '', styles: [], links: [] };
   parts.forEach((part, i) => {
-    if (i > 0) out.text += separator;
-    out.text += prefix(i);
-    const shift = out.text.length;
-    out.text += part.text;
-    for (const s of part.styles) out.styles.push({ ...s, offset: s.offset + shift });
-    for (const l of part.links) out.links.push({ ...l, offset: l.offset + shift });
+    const shifted = prefixBlock(part, (i > 0 ? out.text + separator : '') + prefix(i));
+    out.text = shifted.text;
+    out.styles.push(...shifted.styles.slice(0, part.styles.length));
+    out.links.push(...shifted.links.slice(0, part.links.length));
   });
   return out;
 }
@@ -72,44 +71,44 @@ function imageFallback(block: ImageBlock): Block {
 
 /**
  * Merge adjacent unstyled paragraphs pairwise, scanning from the end and repeating passes, so merges
- * spread over the document; stops as soon as `excess` blocks are gone. Returns the merge count.
+ * spread over the document; stops as soon as `blocks` fits `limit`.
  */
-function mergeParagraphs(blocks: Block[], excess: number): number {
-  let merged = 0;
-  for (let progress = true; merged < excess && progress; ) {
+function mergeParagraphs(blocks: Block[], limit: number) {
+  let progress: boolean;
+  do {
     progress = false;
-    for (let i = blocks.length - 1; i > 0 && merged < excess; i--) {
+    for (let i = blocks.length - 1; i > 0 && blocks.length > limit; i--) {
       const a = blocks[i - 1];
       const b = blocks[i];
       if (!isText(a, 'unstyled') || !isText(b, 'unstyled')) continue;
       blocks.splice(i - 1, 2, joinText([a, b], '\n\n'));
-      merged++;
       progress = true;
       i--;
     }
-  }
-  return merged;
+  } while (progress && blocks.length > limit);
 }
 
 /**
  * Merge whole runs of same-type list items (from the end) into one unstyled block with written
  * markers. Whole runs only: a partly merged ordered list would restart X's numbering.
  */
-function mergeLists(blocks: Block[], excess: number): number {
-  let merged = 0;
-  for (let end = blocks.length - 1; end > 0 && merged < excess; end--) {
+function mergeLists(blocks: Block[], limit: number) {
+  let end = blocks.length - 1;
+  while (end > 0 && blocks.length > limit) {
     const last = blocks[end];
-    if (last.kind !== 'text' || (last.type !== 'unordered-list-item' && last.type !== 'ordered-list-item')) continue;
+    const ordered = isText(last, 'ordered-list-item');
+    if (!ordered && !isText(last, 'unordered-list-item')) {
+      end--;
+      continue;
+    }
     let start = end;
     while (isText(blocks[start - 1], last.type)) start--;
-    if (start === end) continue;
-    const ordered = last.type === 'ordered-list-item';
-    const items = blocks.slice(start, end + 1) as TextBlock[];
-    blocks.splice(start, items.length, joinText(items, '\n', (i) => (ordered ? `${i + 1}. ` : '• ')));
-    merged += items.length - 1;
-    end = start;
+    if (start < end) {
+      const items = blocks.slice(start, end + 1) as TextBlock[];
+      blocks.splice(start, items.length, joinText(items, '\n', (i) => (ordered ? `${i + 1}. ` : '• ')));
+    }
+    end = start - 1;
   }
-  return merged;
 }
 
 /** Apply X Article limits to a converted document. Pure: returns a new document. */
@@ -118,19 +117,16 @@ export function fitLimits(doc: ArticleDoc): ArticleDoc {
   const limit = (message: string) => warnings.push({ code: 'limit', message });
 
   let media = 0;
-  let replaced = 0;
-  const blocks = doc.blocks.map((block) => {
-    if (block.kind !== 'image') return block;
-    if (++media <= ARTICLE_MEDIA_LIMIT) return block;
-    replaced++;
-    return imageFallback(block);
-  });
-  if (replaced) limit(`图片超过 X 的 ${ARTICLE_MEDIA_LIMIT} 张上限，第 ${ARTICLE_MEDIA_LIMIT + 1} 张起的 ${replaced} 张改为文字`);
+  const blocks = doc.blocks.map((block) => (block.kind === 'image' && ++media > ARTICLE_MEDIA_LIMIT ? imageFallback(block) : block));
+  if (media > ARTICLE_MEDIA_LIMIT) {
+    limit(`图片超过 X 的 ${ARTICLE_MEDIA_LIMIT} 张上限，第 ${ARTICLE_MEDIA_LIMIT + 1} 张起的 ${media - ARTICLE_MEDIA_LIMIT} 张改为文字`);
+  }
 
-  if (blocks.length > ARTICLE_BLOCK_LIMIT) {
-    const total = blocks.length;
-    const merged = mergeParagraphs(blocks, total - ARTICLE_BLOCK_LIMIT) + mergeLists(blocks, blocks.length - ARTICLE_BLOCK_LIMIT);
-    if (merged) limit(`共 ${total} 块，超过 X 的 ${ARTICLE_BLOCK_LIMIT} 块上限，已合并 ${merged} 处相邻段落或列表`);
+  const total = blocks.length;
+  if (total > ARTICLE_BLOCK_LIMIT) {
+    mergeParagraphs(blocks, ARTICLE_BLOCK_LIMIT);
+    mergeLists(blocks, ARTICLE_BLOCK_LIMIT);
+    if (blocks.length < total) limit(`共 ${total} 块，超过 X 的 ${ARTICLE_BLOCK_LIMIT} 块上限，已合并 ${total - blocks.length} 处相邻段落或列表`);
     if (blocks.length > ARTICLE_BLOCK_LIMIT) {
       limit(`合并后仍有 ${blocks.length} 块，超过 X 的 ${ARTICLE_BLOCK_LIMIT} 块上限，X 会拒绝保存，建议拆成多篇`);
     }
