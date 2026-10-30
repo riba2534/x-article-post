@@ -48,6 +48,7 @@ jobs:
           XAP_VERSION: ${{ steps.version.outputs.version }}
         run: |
           npm run build
+          npm run check:sw
           npm run build:bridge
           node dist-bridge/xap.mjs --help >/dev/null
           node scripts/package.mjs
