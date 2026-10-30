@@ -7,7 +7,6 @@ import {
   type ArticleDoc,
   type Block,
   type ConvertOptions,
-  type ConvertStats,
   type ImageBlock,
   type InlineStyle,
   type TextBlockType,
@@ -18,6 +17,7 @@ import { decodeEntities, RAW_TEXT_TAGS, tokenizeHtml, type HtmlToken } from './h
 import { normalizeLanguage } from './lang';
 import { texToUnicode, toScript } from './math-unicode';
 import { parseMarkdown, type MdNode } from './parse';
+import { computeStats, fitLimits } from './limits';
 import { TextBuilder } from './text';
 
 interface Env {
@@ -82,7 +82,7 @@ class Warnings {
 }
 
 function plainText(node: MdNode): string {
-  if (node.type === 'texMath' || node.type === 'inlineMath') return node.value ?? '';
+  if (node.type === 'texMath') return node.value ?? '';
   if (node.value !== undefined && !node.children) return node.type === 'html' ? '' : node.value;
   if (node.type === 'image' || node.type === 'imageReference') return node.alt ?? '';
   return (node.children ?? []).map(plainText).join('');
@@ -194,7 +194,7 @@ class Converter {
     this.flow(children, ROOT_ENV);
     this.footnotes();
 
-    const doc: ArticleDoc = { title, blocks: this.blocks, warnings: this.warnings.list, stats: this.stats() };
+    const doc: ArticleDoc = { title, blocks: this.blocks, warnings: this.warnings.list, stats: computeStats(this.blocks) };
     if (meta.cover) doc.cover = meta.cover;
     if (meta.description) doc.description = meta.description;
     return doc;
@@ -260,35 +260,6 @@ class Converter {
       this.footnoteIndex.set(id, index);
     }
     return index + 1;
-  }
-
-  private stats(): ConvertStats {
-    const stats: ConvertStats = { blocks: this.blocks.length, images: 0, mermaid: 0, codeBlocks: 0, tables: 0, latex: 0, tweets: 0, characters: 0 };
-    for (const block of this.blocks) {
-      switch (block.kind) {
-        case 'text':
-          stats.characters += block.text.length;
-          break;
-        case 'markdown':
-          stats.characters += block.markdown.length;
-          if (block.role === 'code') stats.codeBlocks++;
-          if (block.role === 'table') stats.tables++;
-          break;
-        case 'latex':
-          stats.characters += block.tex.length;
-          stats.latex++;
-          break;
-        case 'tweet':
-          stats.tweets++;
-          break;
-        case 'image':
-          if (block.source.type === 'url') stats.images++;
-          else if (block.source.type === 'mermaid') stats.mermaid++;
-          else stats.tables++;
-          break;
-      }
-    }
-    return stats;
   }
 
   // -------------------------------------------------------------------------
@@ -373,9 +344,6 @@ class Converter {
           break;
         case 'code':
           this.code(node);
-          break;
-        case 'math':
-          this.latex(node.value ?? '');
           break;
         case 'html':
           this.htmlBlock(node.value ?? '', env);
@@ -621,11 +589,6 @@ class Converter {
     return { kind: 'markdown', role: 'code', markdown: fenced(tex, 'latex'), language: 'latex' };
   }
 
-  private latex(raw: string) {
-    const block = this.latexBlock(raw);
-    if (block) this.blocks.push(block);
-  }
-
   private table(node: MdNode) {
     const rows = node.children ?? [];
     const align = node.align ?? [];
@@ -732,9 +695,6 @@ class Converter {
         break;
       case 'html':
         for (const token of tokenizeHtml(node.value ?? '')) this.htmlToken(token, b, false);
-        break;
-      case 'inlineMath':
-        this.displayMath(node.value ?? '', b);
         break;
       case 'texMath':
         if (node.display) this.displayMath(node.value ?? '', b);
@@ -926,8 +886,6 @@ class Converter {
         return `\\[${this.footnoteNumber(node.identifier ?? '')}\\]`;
       case 'html':
         return tokenizeHtml(node.value ?? '').map((t) => this.mdHtmlToken(t)).join('');
-      case 'inlineMath':
-        return `$$${node.value ?? ''}$$`;
       case 'texMath': {
         const tex = node.value ?? '';
         if (node.display) return `$$${tex}$$`;
@@ -976,5 +934,5 @@ class Converter {
 }
 
 export function convertMarkdown(markdown: string, options: Partial<ConvertOptions> = {}): ArticleDoc {
-  return new Converter(markdown.replace(/\r\n?/g, '\n'), options).run();
+  return fitLimits(new Converter(markdown.replace(/\r\n?/g, '\n'), options).run());
 }

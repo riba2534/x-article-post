@@ -1,7 +1,6 @@
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkGoldmarkCompat } from './syntax';
 
@@ -27,7 +26,6 @@ const processor = unified()
   .use(remarkParse)
   .use(remarkFrontmatter, ['yaml', 'toml'])
   .use(remarkGfm)
-  .use(remarkMath, { singleDollarTextMath: false })
   .use(remarkGoldmarkCompat);
 
 export function parseMarkdown(markdown: string): MdNode {
