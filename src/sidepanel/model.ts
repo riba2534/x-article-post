@@ -77,6 +77,7 @@ const WARNING_LABELS: Record<WarningCode, string> = {
   'image-unsupported': '图片',
   'code-split': '代码块拆分',
   'latex-invalid': '公式无效',
+  limit: 'X 限制',
   other: '其他',
 };
 

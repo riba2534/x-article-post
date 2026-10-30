@@ -96,6 +96,7 @@ export type WarningCode =
   | 'image-unsupported'
   | 'code-split'
   | 'latex-invalid'
+  | 'limit'
   | 'other';
 
 export interface Warning {
@@ -152,6 +153,15 @@ export const DEFAULT_CONVERT_OPTIONS: ConvertOptions = {
 
 /** X flag responsive_web_twitter_article_markdown_block_limit (10) * 1000. */
 export const MARKDOWN_BLOCK_LIMIT = 10_000;
+
+/** Server-side ArticleBlockCountEntityValidator: saves with more blocks are rejected (verified 2026-10-30). */
+export const ARTICLE_BLOCK_LIMIT = 1000;
+/** X flag responsive_web_twitter_article_media_limit: media blocks per article (cover not included). */
+export const ARTICLE_MEDIA_LIMIT = 25;
+/** X flag responsive_web_twitter_article_character_limit (100) * 1000. */
+export const ARTICLE_CHARACTER_LIMIT = 100_000;
+/** X flag responsive_web_twitter_article_title_limit. */
+export const ARTICLE_TITLE_LIMIT = 100;
 
 // ---------------------------------------------------------------------------
 // Write request: what the pipeline hands to the writer after images are ready.
