@@ -13,6 +13,8 @@ import type {
   WriteTarget,
 } from '../../shared/types';
 
+const PREPARE_WARNINGS = new Set(['image-unsupported', 'limit']);
+
 export type PrepareMessage = Extract<RuntimeMessage, { type: 'xap:prepare' }>;
 export type PrepareReply = { ok: true; request: WriteRequest; doc: ArticleDoc } | { ok: false; error: string };
 
@@ -66,7 +68,9 @@ export function createCommandHandler(deps: CommandDeps) {
     if (!reply.ok) throw new CommandError('prepare-failed', reply.error);
     const result = await deps.runWrite(reply.request, (progress) => send({ type: 'progress', id, progress }));
     if (!result.ok && result.error === 'busy') throw new CommandError('busy', 'The extension is already writing a draft');
-    return result;
+    // Images that could not be prepared never reach the writer; surface them to the agent too.
+    const prepared = reply.doc.warnings.filter((w) => PREPARE_WARNINGS.has(w.code)).map((w) => w.message);
+    return prepared.length ? { ...result, warnings: [...prepared, ...result.warnings] } : result;
   }
 
   async function run(cmd: BridgeCommand, send: Send): Promise<unknown> {

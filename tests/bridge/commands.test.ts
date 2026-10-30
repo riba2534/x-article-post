@@ -61,6 +61,19 @@ describe('bridge command handler', () => {
     expect(lastResponse(sent)).toEqual({ type: 'response', id: 'c1', ok: true, result: okResult });
   });
 
+  it('adds image preparation warnings to the draft result', async () => {
+    const withWarnings: ArticleDoc = {
+      ...doc,
+      warnings: [
+        { code: 'image-unsupported', message: '图片未能准备：a.png（HTTP 404）' },
+        { code: 'heading-demoted', message: '标题降级' },
+      ],
+    };
+    const { run, sent } = setup({ prepare: vi.fn(async () => ({ ok: true as const, request, doc: withWarnings })) });
+    await run('draft', { markdown: 'x' });
+    expect(lastResponse(sent)).toEqual({ type: 'response', id: 'c1', ok: true, result: { ...okResult, warnings: ['图片未能准备：a.png（HTTP 404）'] } });
+  });
+
   it('targets a new draft and defaults existing drafts to append', async () => {
     const { run, deps } = setup();
     await run('draft', { markdown: 'x' });
