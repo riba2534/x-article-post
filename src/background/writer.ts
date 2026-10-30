@@ -1,8 +1,9 @@
 // Background side of the writer: picks/opens the X tab and drives the content script over a port.
 // It only ever creates or edits drafts; nothing here can publish.
 import type { ExtensionStatus, RuntimeMessage, WriteProgress, WriteRequest, WriteResult } from '../shared/types';
-import { WRITE_PORT, articleIdFromUrl, type EditorStatus, type MainResult, type PortDown, type PortUp } from '../content/protocol';
-import { editUrl, ensureContent, findStatusTab, focusTab, prepareTab, sendToTab } from './writer/tabs';
+import { WRITE_PORT, articleIdFromUrl, editUrl, type EditorStatus, type MainResult, type PortDown, type PortUp } from '../content/protocol';
+import { emptyMainResult, errorMessage } from '../content/util';
+import { findStatusTab, prepareTab, sendToTab } from './writer/tabs';
 
 /** No message from the page for this long means the tab died or got stuck. */
 const IDLE_TIMEOUT_MS = 180_000;
@@ -31,9 +32,7 @@ const broadcast = (msg: RuntimeMessage): void => {
   chrome.runtime.sendMessage(msg).catch(() => {});
 };
 
-const emptyResult = (runId: string, error?: string): WriteResult => ({
-  ok: false, runId, blocksWritten: 0, imagesOk: 0, imagesFailed: [], titleSet: false, coverSet: false, warnings: [], error,
-});
+const emptyResult = (runId: string, error?: string): WriteResult => ({ ...emptyMainResult(error), ok: false, runId });
 
 export async function getXTabStatus(): Promise<ExtensionStatus['xTab']> {
   const tab = await findStatusTab();
@@ -100,8 +99,6 @@ export async function runWrite(request: WriteRequest, onProgress: (p: WriteProgr
     progress({ runId: request.runId, phase: 'tab', message: '打开 X 草稿' });
     const { tabId, articleId } = await prepareTab(request.target, check);
     check();
-    await ensureContent(tabId);
-    await focusTab(tabId);
     const r = await drive(tabId, request, articleId, run, progress);
     const id = r.articleId ?? articleId;
     result = {
@@ -112,7 +109,7 @@ export async function runWrite(request: WriteRequest, onProgress: (p: WriteProgr
       url: editUrl(id),
     };
   } catch (e) {
-    result = emptyResult(request.runId, run.cancelled ? 'cancelled' : e instanceof Error ? e.message : String(e));
+    result = emptyResult(request.runId, run.cancelled ? 'cancelled' : errorMessage(e));
   } finally {
     active = null;
   }

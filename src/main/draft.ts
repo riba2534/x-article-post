@@ -30,12 +30,13 @@ interface Kit {
   newKey: () => string;
 }
 
-export function hasCharacterSample(content: Draft): boolean {
-  return Boolean(content.getBlockMap().find((b: Draft) => b.getCharacterList().size > 0));
-}
+const sampleBlockOf = (content: Draft): Draft | undefined =>
+  content.getBlockMap().find((b: Draft) => b.getCharacterList().size > 0);
+
+export const hasCharacterSample = (content: Draft): boolean => Boolean(sampleBlockOf(content));
 
 function makeKit(content: Draft): Kit {
-  const sampleBlock = content.getBlockMap().find((b: Draft) => b.getCharacterList().size > 0);
+  const sampleBlock = sampleBlockOf(content);
   if (!sampleBlock) throw new Error('Draft.js character sample missing');
   const sampleChar = sampleBlock.getCharacterList().first();
   const used = new Set<string>(content.getBlockMap().keySeq().toArray());
@@ -51,10 +52,14 @@ function makeKit(content: Draft): Kit {
   return { sampleBlock, sampleChar, emptyStyle: sampleChar.getStyle().clear(), newKey };
 }
 
-function makeBlock(kit: Kit, type: string, text: string, charAt: (i: number) => Draft): Draft {
-  const characterList = kit.sampleBlock.getCharacterList().clear().withMutations((list: Draft) => {
-    for (let i = 0; i < text.length; i++) list.push(charAt(i));
+function charList(kit: Kit, length: number, charAt: (i: number) => Draft): Draft {
+  return kit.sampleBlock.getCharacterList().clear().withMutations((list: Draft) => {
+    for (let i = 0; i < length; i++) list.push(charAt(i));
   });
+}
+
+function makeBlock(kit: Kit, type: string, text: string, charAt: (i: number) => Draft): Draft {
+  const characterList = charList(kit, text.length, charAt);
   return kit.sampleBlock.merge({
     key: kit.newKey(),
     type,
@@ -78,6 +83,26 @@ function charFactory(kit: Kit): (styles: string[], entity: string | null) => Dra
     }
     return c;
   };
+}
+
+/** Per-character metadata for a text block, computed once per run of identical styles/link. */
+function textChars(
+  length: number,
+  styles: { offset: number; length: number; style: string }[],
+  links: { start: number; end: number; key: string }[],
+  char: (styles: string[], entity: string | null) => Draft,
+): Draft[] {
+  const cuts = [...new Set([0, length, ...styles.flatMap((s) => [s.offset, s.offset + s.length]), ...links.flatMap((l) => [l.start, l.end])])]
+    .filter((c) => c >= 0 && c <= length)
+    .sort((a, b) => a - b);
+  const out: Draft[] = [];
+  for (let k = 0; k + 1 < cuts.length; k++) {
+    const at = cuts[k];
+    const active = styles.filter((s) => at >= s.offset && at < s.offset + s.length).map((s) => s.style);
+    const c = char([...new Set(active)].sort(), links.find((l) => at >= l.start && at < l.end)?.key ?? null);
+    for (let i = at; i < cuts[k + 1]; i++) out.push(c);
+  }
+  return out;
 }
 
 function createEntity(content: Draft, type: string, mutability: string, data: object): { content: Draft; key: string } {
@@ -121,11 +146,8 @@ function buildBlocks(kit: Kit, content: Draft, blocks: WriteBlock[], runId: stri
           content = e.content;
           links.push({ start: link.offset, end: link.offset + link.length, key: e.key });
         }
-        out.push(makeBlock(kit, block.type, block.text, (i) => {
-          const styles = block.styles.filter((s) => i >= s.offset && i < s.offset + s.length).map((s) => s.style);
-          const entity = links.find((l) => i >= l.start && i < l.end)?.key ?? null;
-          return char([...new Set(styles)].sort(), entity);
-        }));
+        const chars = textChars(block.text.length, block.styles, links, char);
+        out.push(makeBlock(kit, block.type, block.text, (i) => chars[i]));
         break;
       }
       case 'latex': {
@@ -151,11 +173,9 @@ function buildBlocks(kit: Kit, content: Draft, blocks: WriteBlock[], runId: stri
   return { content, blocks: out, markers };
 }
 
-export function isContentEmpty(content: Draft): boolean {
-  return content.getBlockMap().every((b: Draft) => b.getType() !== 'atomic' && b.getText().trim() === '');
-}
-
 const isBlankText = (b: Draft): boolean => b.getType() !== 'atomic' && b.getText().trim() === '';
+
+export const isContentEmpty = (content: Draft): boolean => content.getBlockMap().every(isBlankText);
 
 function collapsedAt(es: Draft, key: string, offset: number): Draft {
   return es.getSelection().constructor.createEmpty(key).merge({ anchorOffset: offset, focusOffset: offset });
@@ -248,6 +268,14 @@ export function placeBlockAtMarker(es: Draft, markerKey: string, blockKey: strin
   return pushBlockMap(es, content, blockMap, blockKey, 'remove-range');
 }
 
+/** Adds an empty unstyled block at the end (paired with removeBlock to make X save again). */
+export function appendEmptyBlock(es: Draft): { editorState: Draft; key: string } {
+  const content = es.getCurrentContent();
+  const block = makeBlock(makeKit(content), 'unstyled', '', () => null);
+  const blockMap = content.getBlockMap().set(block.getKey(), block);
+  return { editorState: pushBlockMap(es, content, blockMap, block.getKey(), 'split-block'), key: block.getKey() };
+}
+
 export function removeBlock(es: Draft, key: string): Draft {
   const content = es.getCurrentContent();
   const map = content.getBlockMap();
@@ -276,7 +304,7 @@ export function replaceMarker(es: Draft, marker: string, text: string): Draft {
   const block = content.getBlockForKey(key).merge({
     type: 'unstyled',
     text,
-    characterList: makeBlock(kit, 'unstyled', text, () => plain).getCharacterList(),
+    characterList: charList(kit, text.length, () => plain),
   });
   return withBlockMap(es, content, content.getBlockMap().set(key, block), 'change-block-type');
 }

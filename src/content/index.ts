@@ -13,7 +13,8 @@ import {
   type PortDown,
   type PortUp,
 } from './protocol';
-import { clickCreate, sleep } from './page';
+import { clickCreate } from './page';
+import { emptyMainResult, errorMessage, sleep } from './util';
 
 type Pending = { resolve(v: unknown): void; reject(e: Error): void };
 
@@ -95,7 +96,7 @@ if (!g.__xapContent) {
     try {
       return (await callMain({ method: 'state' }, 3000)) as EditorStatus;
     } catch {
-      return { url: location.href, articleId: articleIdFromUrl(location.href), editorReady: false, empty: true };
+      return { url: location.href, articleId: articleIdFromUrl(location.href), editorReady: false };
     }
   }
 
@@ -110,7 +111,7 @@ if (!g.__xapContent) {
       }
       return { ok: false, error: '新建草稿后编辑器未就绪' };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      return { ok: false, error: errorMessage(e) };
     }
   }
 
@@ -148,10 +149,7 @@ if (!g.__xapContent) {
       if (msg.type === 'image') return toMain({ kind: 'image', imageId: msg.imageId, image: msg.image, error: msg.error });
       callMain({ method: 'write', request: msg.request })
         .then((value) => value as MainResult)
-        .catch((e: unknown): MainResult => ({
-          blocksWritten: 0, imagesOk: 0, imagesFailed: [], titleSet: false, coverSet: false, warnings: [],
-          error: e instanceof Error ? e.message : String(e),
-        }))
+        .catch((e: unknown) => emptyMainResult(errorMessage(e)))
         .then((result) => {
           if (writePort === p) p.postMessage({ type: 'result', result } satisfies PortUp);
         });

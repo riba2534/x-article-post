@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ContentState, EditorState, convertToRaw } from 'draft-js';
 import type { WriteBlock } from '../../src/shared/types';
 import {
+  appendEmptyBlock,
   applyWrite,
   cleanupMarkers,
   findMarkerBlock,
@@ -87,6 +88,18 @@ describe('applyWrite text blocks', () => {
     const r = raw(write([text('ab cd', { links: [{ offset: 0, length: 2, url: 'u1' }, { offset: 3, length: 2, url: 'u2' }, { offset: 0, length: 0, url: 'x' }] })]).editorState);
     expect(r.blocks[0].entityRanges).toEqual([{ offset: 0, length: 2, key: 0 }, { offset: 3, length: 2, key: 1 }]);
     expect(Object.values(r.entityMap).map((e) => e.data.url)).toEqual(['u1', 'u2']);
+  });
+
+  it('splits style runs at every boundary and ignores ranges past the text', () => {
+    const r = raw(write([text('abcdef', {
+      styles: [{ offset: 4, length: 9, style: 'STRIKETHROUGH' }, { offset: 1, length: 2, style: 'BOLD' }, { offset: 1, length: 2, style: 'BOLD' }],
+      links: [{ offset: 2, length: 3, url: 'u' }],
+    })]).editorState);
+    expect(r.blocks[0].inlineStyleRanges).toEqual([
+      { offset: 1, length: 2, style: 'BOLD' },
+      { offset: 4, length: 2, style: 'STRIKETHROUGH' },
+    ]);
+    expect(r.blocks[0].entityRanges).toEqual([{ offset: 2, length: 3, key: 0 }]);
   });
 
   it('caret ends at the end of the last block', () => {
@@ -261,6 +274,14 @@ describe('image markers', () => {
     expect(r.blocks.map((b) => [b.type, b.text])).toEqual([['unstyled', 'before'], ['unstyled', '[图片 a]'], ['unstyled', 'after']]);
     expect(r.blocks[1].inlineStyleRanges).toEqual([]);
     expect(replaceMarker(es, 'missing', 'x')).toBe(es);
+  });
+
+  it('appendEmptyBlock + removeBlock round-trips the content', () => {
+    const base = write([text('a'), { kind: 'divider' }]).editorState;
+    const extra = appendEmptyBlock(base);
+    expect(raw(extra.editorState).blocks.map((b) => [b.type, b.text]).slice(-2)).toEqual([['unstyled', ''], ['unstyled', '']]);
+    expect(extra.editorState.getSelection().getAnchorKey()).toBe(extra.key);
+    expect(raw(removeBlock(extra.editorState, extra.key)).blocks).toEqual(raw(base).blocks);
   });
 
   it('removeBlock deletes a block and keeps at least one', () => {

@@ -1,7 +1,6 @@
 // X Article page access from the MAIN world: Draft instance, upload handler, title, cover.
 import type { Draft } from './draft';
-
-export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+import { PUBLISH_RE, sleep } from '../content/util';
 
 interface Fiber {
   return: Fiber | null;
@@ -102,7 +101,6 @@ function coverImages(): string[] {
 }
 
 const DONE_LABELS = ['应用', '套用', '完成', '保存', 'apply', 'done', 'save', '適用', '保存する', '완료', '적용'];
-const FORBIDDEN = /publish|发布|發佈|發布|公開|게시/i;
 
 /** Confirms X's cover crop dialog: a labelled confirm button, else the dialog's own onDone prop. */
 function confirmCoverDialog(): boolean {
@@ -110,7 +108,7 @@ function confirmCoverDialog(): boolean {
   if (!dialog) return false;
   for (const button of dialog.querySelectorAll<HTMLElement>('button, [role="button"]')) {
     const label = `${button.getAttribute('aria-label') ?? ''} ${button.textContent ?? ''}`.trim().toLowerCase();
-    if (!label || FORBIDDEN.test(label) || button.matches(':disabled, [aria-disabled="true"]')) continue;
+    if (!label || PUBLISH_RE.test(label) || button.matches(':disabled, [aria-disabled="true"]')) continue;
     if (button.getAttribute('data-testid') === 'applyButton' || DONE_LABELS.some((w) => label === w || label.split(/\s+/).includes(w))) {
       button.click();
       return true;
@@ -154,20 +152,26 @@ export async function setCover(file: File, checkCancel: () => void, timeoutMs = 
 // a save that starts after the debounce window proves the latest edit was sent. We only observe
 // resource timings (read-only).
 const SAVE_DEBOUNCE_MS = 2500;
-const contentSaves: number[] = [];
-new PerformanceObserver((list) => {
-  for (const e of list.getEntries()) {
-    if (/\/graphql\/[^/]+\/ArticleEntityUpdateContent\b/.test(e.name)) contentSaves.push(e.startTime);
-  }
-  contentSaves.splice(0, Math.max(0, contentSaves.length - 20));
-}).observe({ type: 'resource' });
 
-/** Resolves true once X's debounced save for the edit made at `since` (performance.now()) completed. */
-export async function waitContentSaved(since: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (contentSaves.some((t) => t >= since + SAVE_DEBOUNCE_MS)) return true;
-    await sleep(250);
-  }
-  return false;
+/** Observes X's content saves while a write runs. */
+export function watchSaves(): { savedAfter(since: number, timeoutMs: number): Promise<boolean>; stop(): void } {
+  let latest = -Infinity;
+  const observer = new PerformanceObserver((list) => {
+    for (const e of list.getEntries()) {
+      if (/\/graphql\/[^/]+\/ArticleEntityUpdateContent\b/.test(e.name)) latest = Math.max(latest, e.startTime);
+    }
+  });
+  observer.observe({ type: 'resource' });
+  return {
+    /** True once X's debounced save for an edit made at `since` (performance.now()) completed. */
+    async savedAfter(since, timeoutMs) {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (latest >= since + SAVE_DEBOUNCE_MS) return true;
+        await sleep(250);
+      }
+      return false;
+    },
+    stop: () => observer.disconnect(),
+  };
 }

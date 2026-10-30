@@ -1,4 +1,4 @@
-// Messages between background, the content script and the MAIN-world script. Types only.
+// Messages and URLs shared by background, the content script and the MAIN-world script.
 import type { PreparedImage, WriteBlock, WriteProgress, WriteResult } from '../shared/types';
 
 /** What MAIN needs to write; image bytes are fetched one by one on demand. */
@@ -18,7 +18,6 @@ export interface EditorStatus {
   url: string;
   articleId?: string;
   editorReady: boolean;
-  empty: boolean;
 }
 
 /** background -> content via chrome.tabs.sendMessage. */
@@ -66,5 +65,11 @@ export type FromMain =
   | { kind: 'progress'; progress: WriteProgress }
   | { kind: 'need-image'; imageId: string };
 
+export const ARTICLES_URL = 'https://x.com/compose/articles';
+export const editUrl = (id: string): string => `${ARTICLES_URL}/edit/${id}`;
+
 export const articleIdFromUrl = (url: string): string | undefined =>
   /\/compose\/articles\/edit\/(\d+)/.exec(url)?.[1];
+
+/** The Articles list page (where "create" lives), path or full URL. */
+export const isArticlesList = (url: string): boolean => /\/compose\/articles\/?(\?.*)?$/.test(url);

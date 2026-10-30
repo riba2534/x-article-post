@@ -2,9 +2,9 @@
 // MessageChannel; messages without the handshake token are ignored. Nothing is exposed globally.
 import type { PreparedImage, WritePhase } from '../shared/types';
 import { CONNECT_SOURCE, MAIN_READY_SOURCE, articleIdFromUrl, type EditorStatus, type FromMain, type MainCall, type ToMain } from '../content/protocol';
-import { isContentEmpty } from './draft';
 import { findDraftNode } from './dom';
 import { runWrite } from './write';
+import { errorMessage } from '../content/util';
 
 const IMAGE_TIMEOUT_MS = 60_000;
 
@@ -15,12 +15,10 @@ let job: { cancelled: boolean; images: Map<string, { resolve(i: PreparedImage): 
 const send = (msg: FromMain): void => port?.postMessage(msg);
 
 function state(): EditorStatus {
-  const node = findDraftNode();
   return {
     url: location.href,
     articleId: articleIdFromUrl(location.href),
-    editorReady: Boolean(node),
-    empty: node ? isContentEmpty(node.props.editorState.getCurrentContent()) : true,
+    editorReady: Boolean(findDraftNode()),
   };
 }
 
@@ -74,7 +72,7 @@ function onPortMessage(ev: MessageEvent<ToMain>): void {
   }
   call(msg.call).then(
     (value) => send({ kind: 'reply', id: msg.id, ok: true, value }),
-    (e: unknown) => send({ kind: 'reply', id: msg.id, ok: false, error: e instanceof Error ? e.message : String(e) }),
+    (e: unknown) => send({ kind: 'reply', id: msg.id, ok: false, error: errorMessage(e) }),
   );
 }
 

@@ -1,20 +1,32 @@
 // X tab handling for the writer: find/open, focus, content-script readiness.
-import { articleIdFromUrl, type ContentRequest, type EditorStatus, type NewDraftResponse } from '../../content/protocol';
+import {
+  ARTICLES_URL,
+  articleIdFromUrl,
+  editUrl,
+  isArticlesList,
+  type ContentRequest,
+  type EditorStatus,
+  type NewDraftResponse,
+} from '../../content/protocol';
+import { sleep } from '../../content/util';
 
-export const ARTICLES_URL = 'https://x.com/compose/articles';
-export const editUrl = (id: string): string => `${ARTICLES_URL}/edit/${id}`;
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const X_HOST = /^https:\/\/(x|twitter)\.com\//;
-const LIST_PAGE = /^https:\/\/(x|twitter)\.com\/compose\/articles\/?(\?.*)?$/;
 
 export function sendToTab<T>(tabId: number, msg: ContentRequest): Promise<T> {
   return chrome.tabs.sendMessage(tabId, msg) as Promise<T>;
 }
 
+const lastWindowId = async (): Promise<number | undefined> =>
+  (await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => undefined))?.id;
+
 async function windowTabs(): Promise<chrome.tabs.Tab[]> {
-  const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => undefined);
-  return chrome.tabs.query(win?.id !== undefined ? { windowId: win.id } : {});
+  const windowId = await lastWindowId();
+  return chrome.tabs.query(windowId !== undefined ? { windowId } : {});
+}
+
+async function createTab(url: string): Promise<number> {
+  const tab = await chrome.tabs.create({ url, active: true, windowId: await lastWindowId() });
+  return tab.id!;
 }
 
 async function waitComplete(tabId: number, timeoutMs = 30_000): Promise<chrome.tabs.Tab> {
@@ -35,20 +47,14 @@ export async function focusTab(tabId: number): Promise<void> {
 
 /** Reuses an Articles list tab (never someone's open draft) or opens one in the current window. */
 async function openList(): Promise<number> {
-  const reuse = (await windowTabs()).find((t) => t.id !== undefined && t.url && LIST_PAGE.test(t.url));
-  if (reuse?.id !== undefined) return reuse.id;
-  const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => undefined);
-  const tab = await chrome.tabs.create({ url: ARTICLES_URL, active: true, windowId: win?.id });
-  return tab.id!;
+  const reuse = (await windowTabs()).find((t) => t.url && X_HOST.test(t.url) && isArticlesList(t.url));
+  return reuse?.id ?? createTab(ARTICLES_URL);
 }
 
 async function openDraft(articleId: string): Promise<number> {
   const all = await chrome.tabs.query({ url: ['https://x.com/compose/articles/edit/*', 'https://twitter.com/compose/articles/edit/*'] });
   const open = all.find((t) => t.url && articleIdFromUrl(t.url) === articleId);
-  if (open?.id !== undefined) return open.id;
-  const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => undefined);
-  const tab = await chrome.tabs.create({ url: editUrl(articleId), active: true, windowId: win?.id });
-  return tab.id!;
+  return open?.id ?? createTab(editUrl(articleId));
 }
 
 /** Makes sure content.js (and MAIN main.js) answer in the tab, injecting them if needed. */
