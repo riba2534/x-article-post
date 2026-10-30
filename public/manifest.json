@@ -1,13 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "X Article Post",
-  "short_name": "XArticlePost",
+  "name": "Markdown to X Article",
+  "short_name": "MD to X",
   "description": "Write Markdown, get a well-formatted X Article draft. Code, tables, LaTeX, Mermaid and images included.",
   "version": "1.0.0",
   "minimum_chrome_version": "116",
   "homepage_url": "https://github.com/riba2534/x-article-post",
   "action": {
-    "default_title": "X Article Post",
+    "default_title": "Markdown to X Article",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",

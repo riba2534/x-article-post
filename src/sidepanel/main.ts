@@ -59,7 +59,7 @@ const settingsBtn = h('button', { type: 'button', class: 'icon-btn', 'aria-label
 const header = h(
   'header',
   { class: 'topbar' },
-  h('div', { class: 'brand' }, icon('doc', 20), h('span', { class: 'brand-name' }, 'X Article Post')),
+  h('div', { class: 'brand' }, icon('doc', 20), h('span', { class: 'brand-name' }, 'Markdown to X Article')),
   h('div', { class: 'capsules' }, xCapsule, agentCapsule),
   settingsBtn,
 );

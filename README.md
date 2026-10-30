@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/assets/icon-256.png" alt="X Article Post Logo" width="128" />
+  <img src="docs/assets/icon-256.png" alt="Markdown to X Article Logo" width="128" />
 </p>
 
-<h1 align="center">X Article Post</h1>
+<h1 align="center">Markdown to X Article</h1>
 
 <p align="center">
   <strong>用 Markdown 写 X 长文</strong>
@@ -31,7 +31,7 @@
 
 ---
 
-X Article 的编辑器只认它自己的格式：粘贴 Markdown 会变成一堆符号，代码块、表格、公式要一个个从「插入」菜单手动加。X Article Post 把这一步自动化：你写 Markdown，它直接把内容写进 X 的编辑器，用的是 X 原生的标题、列表、代码块、表格、LaTeX 和图片，效果和手动排版一致。
+X Article 的编辑器只认它自己的格式：粘贴 Markdown 会变成一堆符号，代码块、表格、公式要一个个从「插入」菜单手动加。Markdown to X Article 把这一步自动化：你写 Markdown，它直接把内容写进 X 的编辑器，用的是 X 原生的标题、列表、代码块、表格、LaTeX 和图片，效果和手动排版一致。
 
 **只创建草稿，从不发布。** 写完后在 X 里检查一遍，自己点发布。
 
@@ -59,7 +59,7 @@ X Article 的编辑器只认它自己的格式：粘贴 Markdown 会变成一堆
 
 需要 Chrome 116 或更新版本，并且已经在这个浏览器里登录 X。X Article 需要 X Premium。
 
-1. 打开 [最新 Release](https://github.com/riba2534/x-article-post/releases/latest)，下载 `x-article-post-v<版本>.zip` 并解压。
+1. 打开 [最新 Release](https://github.com/riba2534/x-article-post/releases/latest)，下载 `markdown-to-x-article-v<版本>.zip` 并解压。
 2. 打开 `chrome://extensions`，开启右上角的「开发者模式」。
 3. 点「加载已解压的扩展程序」，选择解压后的目录。
 4. 点工具栏上的扩展图标，侧边栏就会打开。
@@ -155,14 +155,14 @@ curl -s http://127.0.0.1:17345/v1/drafts \
   -d "$(jq -n --rawfile md post.md '{markdown: $md}')"
 ```
 
-完整的请求、响应和错误码见 [skills/x-article-post/references/api.md](skills/x-article-post/references/api.md)。
+完整的请求、响应和错误码见 [skills/markdown-to-x-article/references/api.md](skills/markdown-to-x-article/references/api.md)。
 
 ### Agent Skill
 
-[`skills/x-article-post`](skills/x-article-post) 是一个符合 Claude Code Skill 规范的技能包，告诉 Agent 如何检查连接、预检、创建草稿以及处理错误。复制到 `~/.claude/skills/` 下即可使用；Release 里也有打包好的 `x-article-post-skill.zip`。
+[`skills/markdown-to-x-article`](skills/markdown-to-x-article) 是一个符合 Claude Code Skill 规范的技能包，告诉 Agent 如何检查连接、预检、创建草稿以及处理错误。复制到 `~/.claude/skills/` 下即可使用；Release 里也有打包好的 `markdown-to-x-article-skill.zip`。
 
 ```bash
-cp -R skills/x-article-post ~/.claude/skills/
+cp -R skills/markdown-to-x-article ~/.claude/skills/
 ```
 
 **安全边界**：桥接只监听 `127.0.0.1`，HTTP 和 WebSocket 都校验 token，WebSocket 还会校验来源必须是 Chrome 扩展。API 只能创建和写入草稿，没有发布接口。

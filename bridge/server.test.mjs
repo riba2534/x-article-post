@@ -327,7 +327,7 @@ describe('token file', () => {
 });
 
 describe('skill script xap_api.mjs', () => {
-  const script = fileURLToPath(new URL('../skills/x-article-post/scripts/xap_api.mjs', import.meta.url));
+  const script = fileURLToPath(new URL('../skills/markdown-to-x-article/scripts/xap_api.mjs', import.meta.url));
   let md;
 
   const run = (...args) =>

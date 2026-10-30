@@ -8,7 +8,7 @@ import { ensureToken, maskToken, readToken, tokenPath } from './token.mjs';
 /* global __XAP_VERSION__ */
 export const VERSION = typeof __XAP_VERSION__ !== 'undefined' ? __XAP_VERSION__ : 'dev';
 
-const HELP = `xap ${VERSION} - local agent bridge for the X Article Post extension (drafts only, never publishes)
+const HELP = `xap ${VERSION} - local agent bridge for the Markdown to X Article extension (drafts only, never publishes)
 
 Usage:
   xap serve [--port N]            Start the bridge on 127.0.0.1 (default port ${DEFAULT_PORT})

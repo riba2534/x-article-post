@@ -54,7 +54,7 @@ jobs:
           node scripts/package.mjs
           mkdir -p release
           cp dist-bridge/xap.mjs release/xap.mjs
-          (cd skills && zip -qr ../release/x-article-post-skill.zip x-article-post)
+          (cd skills && zip -qr ../release/markdown-to-x-article-skill.zip markdown-to-x-article)
           (cd release && sha256sum * > SHA256SUMS.txt)
           ls -la release
       - name: 生成发布说明
@@ -65,7 +65,7 @@ jobs:
           {
             echo "## 安装"
             echo
-            echo "1. 下载 \`x-article-post-v$VERSION.zip\` 并解压。"
+            echo "1. 下载 \`markdown-to-x-article-v$VERSION.zip\` 并解压。"
             echo "2. 打开 \`chrome://extensions\`，开启「开发者模式」，点「加载已解压的扩展程序」，选择解压后的目录。"
             echo "3. Agent 用户另外下载 \`xap.mjs\`（Node ≥ 22），运行 \`node xap.mjs serve\`，详见 README。"
             echo

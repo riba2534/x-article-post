@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Zero-dependency client for the local x-article-post bridge (Node >= 18).
+// Zero-dependency client for the local Markdown to X Article bridge (Node >= 18).
 // Usage:
 //   node xap_api.mjs status
 //   node xap_api.mjs convert <file.md|->

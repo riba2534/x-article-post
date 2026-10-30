@@ -1,11 +1,11 @@
 ---
-name: x-article-post
-description: Create X (Twitter) Article drafts from Markdown through the local X Article Post Chrome extension and its `xap` bridge (127.0.0.1:17345). Use when the user wants to post, publish, send or sync a Markdown file, blog post or article to X / Twitter as an Article, create or fill an X Article draft, write into an existing X draft, check how Markdown will look on X, or mentions x-article-post, xap, X Article 草稿. 中文触发：把文章/Markdown 发到 X、发到推特、发成 X 长文、创建 X Article 草稿、写入 X 草稿、同步博客到 X、xap 桥接。Only creates and writes drafts; publishing stays a manual step for the user.
+name: markdown-to-x-article
+description: Create X (Twitter) Article drafts from Markdown through the local Markdown to X Article Chrome extension and its `xap` bridge (127.0.0.1:17345). Use when the user wants to post, publish, send or sync a Markdown file, blog post or article to X / Twitter as an Article, create or fill an X Article draft, write into an existing X draft, check how Markdown will look on X, or mentions Markdown to X Article, markdown-to-x-article, x-article-post, xap, X Article 草稿. 中文触发：把文章/Markdown 发到 X、发到推特、发成 X 长文、创建 X Article 草稿、写入 X 草稿、同步博客到 X、xap 桥接。Only creates and writes drafts; publishing stays a manual step for the user.
 ---
 
-# X Article Post
+# Markdown to X Article
 
-The X Article Post extension converts Markdown (headings, lists, code, tables, LaTeX, Mermaid, images) into X's Article editor and writes it into a **draft**. A small local process, `xap`, exposes an HTTP API on `127.0.0.1:17345`; the extension's background connects to it over WebSocket. You talk only to the HTTP API (or the `xap` CLI).
+The Markdown to X Article extension converts Markdown (headings, lists, code, tables, LaTeX, Mermaid, images) into X's Article editor and writes it into a **draft**. A small local process, `xap`, exposes an HTTP API on `127.0.0.1:17345`; the extension's background connects to it over WebSocket. You talk only to the HTTP API (or the `xap` CLI).
 
 Scope: create a new draft or write into an existing draft. There is no publish endpoint, and you should not try to publish through the browser either. When the draft is ready, give the user the draft URL and let them review and publish it themselves; X Article publishing is public and hard to undo.
 
