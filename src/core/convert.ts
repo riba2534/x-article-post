@@ -163,14 +163,17 @@ class Converter {
   private cellHasImage = false;
 
   constructor(
-    private readonly source: string,
+    private source: string,
     options: Partial<ConvertOptions>,
   ) {
     this.opts = { ...DEFAULT_CONVERT_OPTIONS, ...options };
   }
 
   run(): ArticleDoc {
-    const tree = parseMarkdown(this.source);
+    const parsed = parseMarkdown(this.source);
+    const tree = parsed.tree;
+    // Offsets in the tree refer to the parsed text (see math-block.ts).
+    this.source = parsed.source;
     const children = [...(tree.children ?? [])];
     this.collect(tree);
 
