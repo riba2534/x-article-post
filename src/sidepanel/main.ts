@@ -2,6 +2,7 @@
 import './styles.css';
 import { convertMarkdown } from '../core/index';
 import { errorMessage } from '../pipeline/errors';
+import { dropImages } from '../shared/image-store';
 import { assembleRequest, collectImages, collectPermissionOrigins, prepareImageSource } from '../pipeline/prepare';
 import { DEFAULT_SETTINGS, DRAFT_KEY, loadSettings, type Settings } from '../shared/settings';
 import type { ArticleDoc, ExtensionStatus, RuntimeMessage, WriteResult, WriteTarget } from '../shared/types';
@@ -452,7 +453,10 @@ async function runWrite(doc: ArticleDoc, target: WriteTarget, granted: Promise<b
       },
     });
     const { request } = prepared;
-    if (run.cancelled) return finishRun(run, failure(request.runId, 'cancelled'));
+    if (run.cancelled) {
+      void dropImages(request.runId).catch(() => undefined);
+      return finishRun(run, failure(request.runId, 'cancelled'));
+    }
     run.runId = request.runId;
     run.imagesTotal = Object.keys(request.images).length;
     run.prepareWarnings = prepared.doc.warnings.slice(doc.warnings.length).map((w) => w.message);
