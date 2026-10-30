@@ -8,7 +8,7 @@ import type { ArticleDoc, ExtensionStatus, RuntimeMessage, WriteResult, WriteTar
 import { segmented } from './controls';
 import { h, icon } from './dom';
 import { createEditor } from './editor';
-import { buildTarget, countWords, degradeLabels, groupWarnings, type TargetMode } from './model';
+import { buildTarget, countWords, degradeLabels, groupWarnings, retryTarget, type TargetMode } from './model';
 import { openRunView, type RunView } from './run';
 import { openSettings } from './settings-panel';
 import { openSheet } from './sheet';
@@ -17,6 +17,7 @@ type View = 'edit' | 'preview' | 'report';
 
 interface Run {
   runId?: string;
+  target: WriteTarget;
   view: RunView;
   stage: 'prepare' | 'write' | 'done';
   cancelled: boolean;
@@ -399,10 +400,10 @@ function onPrimary() {
   });
 }
 
-function startRun() {
+function startRun(override?: WriteTarget) {
   if (state.run) return;
   const markdown = editor.getText();
-  const target = buildTarget(state.mode, state.status?.xTab?.articleId);
+  const target = override ?? buildTarget(state.mode, state.status?.xTab?.articleId);
   if (!markdown.trim() || !target) return;
   // Before any await: permissions.request needs the user gesture of this click.
   const doc = safeConvert(markdown);
@@ -418,11 +419,13 @@ function failure(runId: string | undefined, error: string): WriteResult {
 function finishRun(run: Run, result: WriteResult) {
   if (run.stage === 'done') return;
   run.stage = 'done';
+  const retry = retryTarget(run.target, result);
   run.view.showResult(result, {
     imagesTotal: run.imagesTotal,
     prepareWarnings: run.prepareWarnings,
+    retryReplacesDraft: retry !== run.target,
     onOpen: openDraft,
-    onRetry: startRun,
+    onRetry: () => startRun(retry),
   });
   state.run = null;
   renderFooter();
@@ -431,6 +434,7 @@ function finishRun(run: Run, result: WriteResult) {
 
 async function runWrite(doc: ArticleDoc, target: WriteTarget, granted: Promise<boolean>) {
   const run: Run = {
+    target,
     stage: 'prepare',
     cancelled: false,
     imagesTotal: 0,
