@@ -4,11 +4,12 @@
 
 export type SaveOp = 'content' | 'title' | 'cover';
 
+/** A save X got an answer for. Aborted / failed-network requests are not answers and not kept. */
 export interface SaveRecord {
   op: SaveOp;
   /** performance.now() when X sent the request. */
   sentAt: number;
-  /** Undefined = accepted; otherwise the first GraphQL error message. */
+  /** Undefined = accepted; otherwise the first GraphQL error message in the response body. */
   error?: string;
 }
 
@@ -16,6 +17,8 @@ export type SaveOutcome = { ok: true } | { ok: false; error: string };
 
 /** X saves body edits ~3 s after the last change. Earlier requests carry older content. */
 export const SAVE_DEBOUNCE_MS = 2500;
+/** After the first answer for the final state, later answers may still arrive; the last one counts. */
+export const SAVE_SETTLE_MS = 1500;
 
 const OPS: Record<string, SaveOp> = {
   ArticleEntityUpdateContent: 'content',
@@ -28,16 +31,20 @@ export function saveOpOf(url: string): SaveOp | undefined {
   return name ? OPS[name] : undefined;
 }
 
-/** First GraphQL error message of a response body, or undefined when X accepted it. */
-export function graphqlError(status: number, body: string): string | undefined {
+/**
+ * Reads X's answer from a completed response: { error } when the body carries GraphQL errors,
+ * {} when it is a normal GraphQL result, null when it is no answer at all (non-JSON body, HTTP
+ * error without errors) and so neither confirms nor rejects anything.
+ */
+export function graphqlAnswer(status: number, body: string): { error?: string } | null {
+  let json: { errors?: { message?: string }[]; data?: unknown };
   try {
-    const json = JSON.parse(body) as { errors?: { message?: string }[] };
-    if (json.errors?.length) return String(json.errors[0].message ?? 'unknown error');
+    json = JSON.parse(body);
   } catch {
-    if (status < 200 || status >= 300) return `HTTP ${status}`;
-    return undefined;
+    return null;
   }
-  return status >= 200 && status < 300 ? undefined : `HTTP ${status}`;
+  if (json?.errors?.length) return { error: String(json.errors[0].message ?? 'unknown error') };
+  return status >= 200 && status < 300 && json && 'data' in json ? {} : null;
 }
 
 interface SaveWin {
@@ -47,10 +54,13 @@ interface SaveWin {
 }
 
 export interface SaveWatcher {
+  /** Answered saves, in completion order. */
   readonly records: readonly SaveRecord[];
+  /** Save requests X sent while we watched (answered or not): 0 means the wrappers saw nothing. */
+  readonly requests: number;
   /**
-   * Resolves with the first content save X sent at least SAVE_DEBOUNCE_MS after `since`
-   * (performance.now()), i.e. the one carrying edits made at `since`; null on timeout.
+   * X's last answer to a content save sent at least SAVE_DEBOUNCE_MS after `since`
+   * (performance.now()), i.e. one carrying the edit made at `since`; null when none came in time.
    */
   contentAfter(since: number, timeoutMs: number): Promise<SaveOutcome | null>;
   stop(): void;
@@ -61,9 +71,11 @@ const urlOf = (input: RequestInfo | URL): string =>
 
 export function watchSaves(win: SaveWin): SaveWatcher {
   const records: SaveRecord[] = [];
+  let requests = 0;
   const waiters = new Set<() => void>();
-  const add = (r: SaveRecord) => {
-    records.push(r);
+  const answer = (op: SaveOp, sentAt: number, a: { error?: string } | null) => {
+    if (!a) return;
+    records.push({ op, sentAt, error: a.error });
     for (const w of waiters) w();
   };
 
@@ -73,9 +85,9 @@ export function watchSaves(win: SaveWin): SaveWatcher {
     const sentAt = win.performance.now();
     const pending = origFetch.call(this, input, init);
     if (op) {
-      pending
-        .then((res) => res.clone().text().then((body) => add({ op, sentAt, error: graphqlError(res.status, body) })))
-        .catch((e: unknown) => add({ op, sentAt, error: e instanceof Error ? e.message : String(e) }));
+      requests++;
+      // A rejected fetch (AbortError, network failure) is no answer from X: ignore it.
+      pending.then((res) => res.clone().text().then((body) => answer(op, sentAt, graphqlAnswer(res.status, body)))).catch(() => {});
     }
     return pending;
   } as typeof fetch;
@@ -94,15 +106,16 @@ export function watchSaves(win: SaveWin): SaveWatcher {
   const wrappedSend = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
     const op = opOf.get(this);
     if (op) {
+      requests++;
       const sentAt = win.performance.now();
       this.addEventListener('loadend', () => {
-        let text = '';
+        if (this.status === 0) return; // aborted or network error
         try {
-          text = this.responseType === '' || this.responseType === 'text' ? this.responseText : JSON.stringify(this.response ?? null);
+          const text = this.responseType === '' || this.responseType === 'text' ? this.responseText : JSON.stringify(this.response ?? null);
+          answer(op, sentAt, graphqlAnswer(this.status, text));
         } catch {
-          // unreadable body: judge by status only
+          // unreadable body: no answer
         }
-        add({ op, sentAt, error: this.status === 0 ? 'network error' : graphqlError(this.status, text) });
       });
     }
     return origSend.call(this, body);
@@ -112,19 +125,24 @@ export function watchSaves(win: SaveWin): SaveWatcher {
 
   return {
     records,
+    get requests() {
+      return requests;
+    },
     contentAfter(since, timeoutMs) {
-      const find = () => records.find((r) => r.op === 'content' && r.sentAt >= since + SAVE_DEBOUNCE_MS);
+      const matching = () => records.filter((r) => r.op === 'content' && r.sentAt >= since + SAVE_DEBOUNCE_MS);
       return new Promise((resolve) => {
-        const done = (r: SaveRecord | undefined) => {
+        let settle: ReturnType<typeof setTimeout> | undefined;
+        const finish = () => {
           waiters.delete(check);
           clearTimeout(timer);
-          resolve(r ? (r.error ? { ok: false, error: r.error } : { ok: true }) : null);
+          clearTimeout(settle);
+          const last = matching().at(-1);
+          resolve(last ? (last.error ? { ok: false, error: last.error } : { ok: true }) : null);
         };
         const check = () => {
-          const r = find();
-          if (r) done(r);
+          if (!settle && matching().length) settle = setTimeout(finish, SAVE_SETTLE_MS);
         };
-        const timer = setTimeout(() => done(undefined), timeoutMs);
+        const timer = setTimeout(finish, timeoutMs);
         waiters.add(check);
         check();
       });
@@ -133,7 +151,6 @@ export function watchSaves(win: SaveWin): SaveWatcher {
       if (win.fetch === wrappedFetch) win.fetch = origFetch;
       if (proto.open === (wrappedOpen as typeof proto.open)) proto.open = origOpen;
       if (proto.send === wrappedSend) proto.send = origSend;
-      for (const w of waiters) w();
     },
   };
 }

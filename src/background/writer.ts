@@ -86,10 +86,16 @@ function drive(tabId: number, request: WriteRequest, articleId: string, run: Run
   });
 }
 
+/** Refuses a request without running it; its stashed images go (never those of the active run). */
+function refuse(request: WriteRequest, error: string): WriteResult {
+  if (active?.runId !== request.runId) void dropImages(request.runId).catch(() => undefined);
+  return emptyResult(request.runId, error);
+}
+
 export async function runWrite(request: WriteRequest, onProgress: (p: WriteProgress) => void): Promise<WriteResult> {
-  if (active) return emptyResult(request.runId, 'busy');
+  if (active) return refuse(request, 'busy');
   // X rejects saves of longer articles; refuse before touching any tab or draft.
-  if (request.blocks.length > ARTICLE_BLOCK_LIMIT) return emptyResult(request.runId, `内容超过 X 的 ${ARTICLE_BLOCK_LIMIT} 块上限`);
+  if (request.blocks.length > ARTICLE_BLOCK_LIMIT) return refuse(request, `内容超过 X 的 ${ARTICLE_BLOCK_LIMIT} 块上限`);
   const run: Run = { runId: request.runId, cancelled: false };
   active = run;
   const progress = (p: WriteProgress) => {
